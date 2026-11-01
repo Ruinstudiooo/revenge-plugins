@@ -1,4 +1,3 @@
-// classic revenge hands the plugin a `bunny` object and a `definePlugin` helper.
-// everything below is typed loosely on purpose, the host shapes change between builds.
-declare const bunny: any
-declare function definePlugin<T>(plugin: T): T
+// revenge hands vendetta-format plugins a `vendetta` object and expects the bundle
+// to evaluate to { onLoad, onUnload, settings }. typed loosely on purpose.
+declare const vendetta: any

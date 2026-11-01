@@ -14,20 +14,15 @@ export const DefaultSettings: Settings = {
 	ignoreBots: true,
 }
 
-/** set once the plugin starts, points at the json file revenge keeps for us */
-export let storage: Partial<Settings> | undefined
-
-export function bindStorage(next: Partial<Settings>) {
-	storage = next
+/** the host fills this in before onLoad, it is a plain object that persists itself */
+export function store(): Record<string, any> {
+	return (vendetta.plugin.storage ??= {})
 }
 
 export function readSettings(): Settings {
-	return { ...DefaultSettings, ...(storage ?? {}) }
+	return { ...DefaultSettings, ...store() }
 }
 
 export function writeSettings(patch: Partial<Settings>) {
-	if (!storage) return
-	for (const key in patch) {
-		(storage as Record<string, unknown>)[key] = (patch as Record<string, unknown>)[key]
-	}
+	Object.assign(store(), patch)
 }

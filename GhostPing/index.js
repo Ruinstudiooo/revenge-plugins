@@ -1,4 +1,4 @@
-"use strict";
+(function(){"use strict";
 var plugin = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -18,43 +18,40 @@ var plugin = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // src/ghost-ping/index.ts
+  // src/GhostPing/index.ts
   var index_exports = {};
   __export(index_exports, {
     default: () => index_default
   });
 
-  // src/ghost-ping/shared.ts
+  // src/GhostPing/shared.ts
   var DefaultSettings = {
     enabled: true,
     everyone: true,
     maxAge: 15,
     ignoreBots: true
   };
-  var storage;
-  function bindStorage(next) {
-    storage = next;
+  function store() {
+    var _a, _b;
+    return (_b = (_a = vendetta.plugin).storage) != null ? _b : _a.storage = {};
   }
   function readSettings() {
-    return { ...DefaultSettings, ...storage != null ? storage : {} };
+    return { ...DefaultSettings, ...store() };
   }
   function writeSettings(patch) {
-    if (!storage) return;
-    for (const key in patch) {
-      storage[key] = patch[key];
-    }
+    Object.assign(store(), patch);
   }
 
-  // src/ghost-ping/settings.ts
+  // src/GhostPing/settings.ts
   var Ages = [
     { value: 5, label: "5m" },
     { value: 15, label: "15m" },
     { value: 60, label: "1h" },
     { value: 0, label: "any" }
   ];
-  function SettingsComponent() {
-    const React = bunny.metro.common.React;
-    const RN = bunny.metro.common.ReactNative;
+  function SettingsScreen() {
+    const React = vendetta.metro.common.React;
+    const RN = vendetta.metro.common.ReactNative;
     const [state, setState] = React.useState(() => readSettings());
     const update = (patch) => {
       writeSettings(patch);
@@ -134,7 +131,7 @@ var plugin = (() => {
     pillTextActive: { color: "#ffffff", fontWeight: "600" }
   };
 
-  // src/ghost-ping/index.ts
+  // src/GhostPing/index.ts
   var recent = /* @__PURE__ */ new Map();
   var MaxRecent = 200;
   var dispose;
@@ -145,7 +142,7 @@ var plugin = (() => {
     if (askedForId) return myId;
     askedForId = true;
     try {
-      myId = (_b = (_a = bunny.metro.findByStoreName("UserStore")) == null ? void 0 : _a.getCurrentUser()) == null ? void 0 : _b.id;
+      myId = (_b = (_a = vendetta.metro.findByStoreName("UserStore")) == null ? void 0 : _a.getCurrentUser()) == null ? void 0 : _b.id;
     } catch {
       myId = void 0;
     }
@@ -158,11 +155,10 @@ var plugin = (() => {
     const oldest = recent.keys().next().value;
     if (oldest) recent.delete(oldest);
   }
-  function pingedUs(record, settings, id) {
+  function pingedUs(record, everyone, id) {
     var _a;
     if (id && ((_a = record.mentions) == null ? void 0 : _a.some((user) => user.id === id))) return true;
-    if (settings.everyone && record.mention_everyone) return true;
-    return false;
+    return everyone && record.mention_everyone === true;
   }
   function tooOld(record, maxAge) {
     if (!maxAge || !record.timestamp) return false;
@@ -182,7 +178,7 @@ var plugin = (() => {
   }
   function toast(text) {
     try {
-      bunny.ui.toasts.showToast(text);
+      vendetta.ui.toasts.showToast(text);
     } catch {
       console.log(`[ghost-ping] ${text}`);
     }
@@ -198,26 +194,34 @@ var plugin = (() => {
     if (id && ((_a = record.author) == null ? void 0 : _a.id) === id) return;
     if (settings.ignoreBots && ((_b = record.author) == null ? void 0 : _b.bot)) return;
     if (tooOld(record, settings.maxAge)) return;
-    if (!pingedUs(record, settings, id)) return;
+    if (!pingedUs(record, settings.everyone, id)) return;
     toast(`ghost ping from ${nameOf(record)}: ${preview(record)}`);
   }
-  var index_default = definePlugin({
-    start() {
-      bindStorage(bunny.plugin.createStorage());
-      dispose = bunny.api.flux.intercept((payload) => {
-        if ((payload == null ? void 0 : payload.type) === "MESSAGE_CREATE" && payload.message) {
-          remember(payload.message);
-        } else if ((payload == null ? void 0 : payload.type) === "MESSAGE_DELETE") {
-          onDelete(payload);
+  var index_default = {
+    onLoad() {
+      const Flux = vendetta.metro.common.FluxDispatcher;
+      dispose = vendetta.patcher.before("dispatch", Flux, (args) => {
+        const payload = args[0];
+        try {
+          if ((payload == null ? void 0 : payload.type) === "MESSAGE_CREATE" && payload.message) {
+            remember(payload.message);
+          } else if ((payload == null ? void 0 : payload.type) === "MESSAGE_DELETE") {
+            onDelete(payload);
+          }
+        } catch (error) {
+          console.log("[ghost-ping] dispatch blew up", error);
         }
       });
     },
-    stop() {
+    onUnload() {
       dispose == null ? void 0 : dispose();
       dispose = void 0;
       recent.clear();
     },
-    SettingsComponent
-  });
+    settings: SettingsScreen
+  };
   return __toCommonJS(index_exports);
 })();
+
+return plugin && (plugin.default || plugin)
+})()

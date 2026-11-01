@@ -1,6 +1,5 @@
-import SettingsComponent from './settings'
-import { bindStorage, readSettings } from './shared'
-import type { Settings } from './shared'
+import SettingsScreen from './settings'
+import { readSettings } from './shared'
 
 interface Author {
 	id: string
@@ -21,7 +20,6 @@ interface MessageRecord {
 interface DeletePayload {
 	id: string
 	channelId: string
-	guildId?: string
 }
 
 // every message we see gets kept for a bit. the delete event only carries an id,
@@ -38,7 +36,7 @@ function whoAmI() {
 	askedForId = true
 
 	try {
-		myId = bunny.metro.findByStoreName('UserStore')?.getCurrentUser()?.id
+		myId = vendetta.metro.findByStoreName('UserStore')?.getCurrentUser()?.id
 	} catch {
 		myId = undefined
 	}
@@ -56,10 +54,9 @@ function remember(message: MessageRecord) {
 	if (oldest) recent.delete(oldest)
 }
 
-function pingedUs(record: MessageRecord, settings: Settings, id?: string) {
+function pingedUs(record: MessageRecord, everyone: boolean, id?: string) {
 	if (id && record.mentions?.some(user => user.id === id)) return true
-	if (settings.everyone && record.mention_everyone) return true
-	return false
+	return everyone && record.mention_everyone === true
 }
 
 function tooOld(record: MessageRecord, maxAge: number) {
@@ -83,7 +80,7 @@ function nameOf(record: MessageRecord) {
 
 function toast(text: string) {
 	try {
-		bunny.ui.toasts.showToast(text)
+		vendetta.ui.toasts.showToast(text)
 	} catch {
 		console.log(`[ghost-ping] ${text}`)
 	}
@@ -101,27 +98,33 @@ function onDelete(payload: DeletePayload) {
 	if (id && record.author?.id === id) return
 	if (settings.ignoreBots && record.author?.bot) return
 	if (tooOld(record, settings.maxAge)) return
-	if (!pingedUs(record, settings, id)) return
+	if (!pingedUs(record, settings.everyone, id)) return
 
 	toast(`ghost ping from ${nameOf(record)}: ${preview(record)}`)
 }
 
-export default definePlugin({
-	start() {
-		bindStorage(bunny.plugin.createStorage())
+export default {
+	onLoad() {
+		const Flux = vendetta.metro.common.FluxDispatcher
 
-		dispose = bunny.api.flux.intercept((payload: Record<string, any>) => {
-			if (payload?.type === 'MESSAGE_CREATE' && payload.message) {
-				remember(payload.message)
-			} else if (payload?.type === 'MESSAGE_DELETE') {
-				onDelete(payload as unknown as DeletePayload)
+		dispose = vendetta.patcher.before('dispatch', Flux, (args: any[]) => {
+			const payload = args[0]
+
+			try {
+				if (payload?.type === 'MESSAGE_CREATE' && payload.message) {
+					remember(payload.message)
+				} else if (payload?.type === 'MESSAGE_DELETE') {
+					onDelete(payload)
+				}
+			} catch (error) {
+				console.log('[ghost-ping] dispatch blew up', error)
 			}
 		})
 	},
-	stop() {
+	onUnload() {
 		dispose?.()
 		dispose = undefined
 		recent.clear()
 	},
-	SettingsComponent,
-})
+	settings: SettingsScreen,
+}

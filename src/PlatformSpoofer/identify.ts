@@ -1,3 +1,5 @@
+import { readProfile, type Preset } from './shared'
+
 const IdentifyOp = /"op"\s*:\s*2\b/
 
 let announced = false
@@ -12,7 +14,7 @@ export function rewriteIdentify(
 	profile: Record<string, string> | undefined,
 ): string | undefined {
 	if (!profile || typeof json !== 'string') return
-	// cheap reject before parsing, this runs on every gateway frame we send
+	// cheap reject before parsing, this runs on every frame we send
 	if (!json.includes('"properties"') || !IdentifyOp.test(json)) return
 
 	let payload: any
@@ -28,33 +30,31 @@ export function rewriteIdentify(
 	return JSON.stringify(payload)
 }
 
-export function hookGateway(profile: () => Record<string, string> | undefined) {
-	const patcher = bunny?.api?.patcher
+export function hookGateway() {
+	const patcher = vendetta?.patcher
 	if (!patcher) {
 		console.log('[platform-spoofer] no patcher on this build')
 		return () => {}
 	}
 
-	const disposers: (() => void)[] = []
 	const WS = (globalThis as any).WebSocket
-
-	if (WS?.prototype?.send) {
-		disposers.push(
-			patcher.before('send', WS.prototype, (args: unknown[]) => {
-				const next = rewriteIdentify(args[0], profile())
-				if (!next) return
-				return [next, ...args.slice(1)]
-			}),
-		)
-		if (!announced) {
-			announced = true
-			console.log('[platform-spoofer] hooked the gateway socket, reconnect to apply')
-		}
-	} else {
+	if (!WS?.prototype?.send) {
 		console.log('[platform-spoofer] no WebSocket.send here, nothing to hook')
+		return () => {}
 	}
 
-	return () => {
-		for (const dispose of disposers) dispose()
+	const dispose = patcher.before('send', WS.prototype, (args: unknown[]) => {
+		const next = rewriteIdentify(args[0], readProfile())
+		if (!next) return
+		return [next, ...args.slice(1)]
+	})
+
+	if (!announced) {
+		announced = true
+		console.log('[platform-spoofer] hooked the gateway socket, reconnect to apply')
 	}
+
+	return dispose
 }
+
+export type { Preset }

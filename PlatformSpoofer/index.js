@@ -1,4 +1,4 @@
-"use strict";
+(function(){"use strict";
 var plugin = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -18,60 +18,13 @@ var plugin = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // src/platform-spoofer/index.ts
+  // src/PlatformSpoofer/index.ts
   var index_exports = {};
   __export(index_exports, {
     default: () => index_default
   });
 
-  // src/platform-spoofer/identify.ts
-  var IdentifyOp = /"op"\s*:\s*2\b/;
-  var announced = false;
-  function rewriteIdentify(json, profile2) {
-    var _a;
-    if (!profile2 || typeof json !== "string") return;
-    if (!json.includes('"properties"') || !IdentifyOp.test(json)) return;
-    let payload;
-    try {
-      payload = JSON.parse(json);
-    } catch {
-      return;
-    }
-    if ((payload == null ? void 0 : payload.op) !== 2 || !((_a = payload.d) == null ? void 0 : _a.properties)) return;
-    Object.assign(payload.d.properties, profile2);
-    return JSON.stringify(payload);
-  }
-  function hookGateway(profile2) {
-    var _a, _b;
-    const patcher = (_a = bunny == null ? void 0 : bunny.api) == null ? void 0 : _a.patcher;
-    if (!patcher) {
-      console.log("[platform-spoofer] no patcher on this build");
-      return () => {
-      };
-    }
-    const disposers = [];
-    const WS = globalThis.WebSocket;
-    if ((_b = WS == null ? void 0 : WS.prototype) == null ? void 0 : _b.send) {
-      disposers.push(
-        patcher.before("send", WS.prototype, (args) => {
-          const next = rewriteIdentify(args[0], profile2());
-          if (!next) return;
-          return [next, ...args.slice(1)];
-        })
-      );
-      if (!announced) {
-        announced = true;
-        console.log("[platform-spoofer] hooked the gateway socket, reconnect to apply");
-      }
-    } else {
-      console.log("[platform-spoofer] no WebSocket.send here, nothing to hook");
-    }
-    return () => {
-      for (const dispose2 of disposers) dispose2();
-    };
-  }
-
-  // src/platform-spoofer/shared.ts
+  // src/PlatformSpoofer/shared.ts
   var DefaultSettings = {
     enabled: true,
     preset: "desktop"
@@ -96,28 +49,74 @@ var plugin = (() => {
       $system_locale: "en-US"
     }
   };
-  var storage;
-  function bindStorage(next) {
-    storage = next;
+  function store() {
+    var _a, _b;
+    return (_b = (_a = vendetta.plugin).storage) != null ? _b : _a.storage = {};
   }
   function readSettings() {
-    return { ...DefaultSettings, ...storage != null ? storage : {} };
+    return { ...DefaultSettings, ...store() };
   }
   function writeSettings(patch) {
-    if (!storage) return;
-    for (const key in patch) {
-      storage[key] = patch[key];
-    }
+    Object.assign(store(), patch);
+  }
+  function readProfile() {
+    var _a;
+    const { enabled, preset } = readSettings();
+    if (!enabled) return void 0;
+    return (_a = Profiles[preset]) != null ? _a : Profiles.desktop;
   }
 
-  // src/platform-spoofer/settings.ts
+  // src/PlatformSpoofer/identify.ts
+  var IdentifyOp = /"op"\s*:\s*2\b/;
+  var announced = false;
+  function rewriteIdentify(json, profile) {
+    var _a;
+    if (!profile || typeof json !== "string") return;
+    if (!json.includes('"properties"') || !IdentifyOp.test(json)) return;
+    let payload;
+    try {
+      payload = JSON.parse(json);
+    } catch {
+      return;
+    }
+    if ((payload == null ? void 0 : payload.op) !== 2 || !((_a = payload.d) == null ? void 0 : _a.properties)) return;
+    Object.assign(payload.d.properties, profile);
+    return JSON.stringify(payload);
+  }
+  function hookGateway() {
+    var _a;
+    const patcher = vendetta == null ? void 0 : vendetta.patcher;
+    if (!patcher) {
+      console.log("[platform-spoofer] no patcher on this build");
+      return () => {
+      };
+    }
+    const WS = globalThis.WebSocket;
+    if (!((_a = WS == null ? void 0 : WS.prototype) == null ? void 0 : _a.send)) {
+      console.log("[platform-spoofer] no WebSocket.send here, nothing to hook");
+      return () => {
+      };
+    }
+    const dispose2 = patcher.before("send", WS.prototype, (args) => {
+      const next = rewriteIdentify(args[0], readProfile());
+      if (!next) return;
+      return [next, ...args.slice(1)];
+    });
+    if (!announced) {
+      announced = true;
+      console.log("[platform-spoofer] hooked the gateway socket, reconnect to apply");
+    }
+    return dispose2;
+  }
+
+  // src/PlatformSpoofer/settings.ts
   var Presets = [
     { value: "desktop", label: "Desktop" },
     { value: "web", label: "Browser" }
   ];
-  function SettingsComponent() {
-    const React = bunny.metro.common.React;
-    const RN = bunny.metro.common.ReactNative;
+  function SettingsScreen() {
+    const React = vendetta.metro.common.React;
+    const RN = vendetta.metro.common.ReactNative;
     const [state, setState] = React.useState(() => readSettings());
     const update = (patch) => {
       writeSettings(patch);
@@ -213,24 +212,20 @@ var plugin = (() => {
     pillTextActive: { color: "#ffffff", fontWeight: "600" }
   };
 
-  // src/platform-spoofer/index.ts
+  // src/PlatformSpoofer/index.ts
   var dispose;
-  function profile() {
-    var _a;
-    const { enabled, preset } = readSettings();
-    if (!enabled) return void 0;
-    return (_a = Profiles[preset]) != null ? _a : Profiles.desktop;
-  }
-  var index_default = definePlugin({
-    start() {
-      bindStorage(bunny.plugin.createStorage());
-      dispose = hookGateway(profile);
+  var index_default = {
+    onLoad() {
+      dispose = hookGateway();
     },
-    stop() {
+    onUnload() {
       dispose == null ? void 0 : dispose();
       dispose = void 0;
     },
-    SettingsComponent
-  });
+    settings: SettingsScreen
+  };
   return __toCommonJS(index_exports);
 })();
+
+return plugin && (plugin.default || plugin)
+})()

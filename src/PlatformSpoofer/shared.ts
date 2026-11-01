@@ -12,8 +12,8 @@ export const DefaultSettings: Settings = {
 
 /**
  * what the gateway reads to decide which platform a session is on.
- * `$browser` is the one that actually matters, `$device` is what makes
- * a phone look like a phone, so desktop keeps it empty.
+ * `$browser` is the one that actually matters, `$device` is the field that
+ * makes a phone look like a phone, so desktop keeps it empty.
  */
 export const Profiles: Record<Preset, Record<string, string>> = {
 	desktop: {
@@ -36,19 +36,20 @@ export const Profiles: Record<Preset, Record<string, string>> = {
 	},
 }
 
-export let storage: Partial<Settings> | undefined
-
-export function bindStorage(next: Partial<Settings>) {
-	storage = next
+export function store(): Record<string, any> {
+	return (vendetta.plugin.storage ??= {})
 }
 
 export function readSettings(): Settings {
-	return { ...DefaultSettings, ...(storage ?? {}) }
+	return { ...DefaultSettings, ...store() }
 }
 
 export function writeSettings(patch: Partial<Settings>) {
-	if (!storage) return
-	for (const key in patch) {
-		(storage as Record<string, unknown>)[key] = (patch as Record<string, unknown>)[key]
-	}
+	Object.assign(store(), patch)
+}
+
+export function readProfile(): Record<string, string> | undefined {
+	const { enabled, preset } = readSettings()
+	if (!enabled) return undefined
+	return Profiles[preset] ?? Profiles.desktop
 }

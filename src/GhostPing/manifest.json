@@ -1,0 +1,7 @@
+{
+	"name": "Ghost Ping",
+	"description": "toasts you when someone deletes a message that pinged you",
+	"authors": [{ "name": "Ji-eun", "id": "1471868110553223371" }],
+	"main": "index.js",
+	"vendetta": { "icon": "ic_notifications_24px" }
+}

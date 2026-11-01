@@ -6,9 +6,9 @@ const Presets: { value: Preset; label: string }[] = [
 	{ value: 'web', label: 'Browser' },
 ]
 
-export default function SettingsComponent() {
-	const React = bunny.metro.common.React
-	const RN = bunny.metro.common.ReactNative
+export default function SettingsScreen() {
+	const React = vendetta.metro.common.React
+	const RN = vendetta.metro.common.ReactNative
 	const [state, setState] = React.useState(() => readSettings() as Settings)
 
 	const update = (patch: Partial<Settings>) => {

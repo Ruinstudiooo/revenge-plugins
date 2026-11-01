@@ -1,96 +1,80 @@
 # Ruin plugins
 
-plugins for revenge classic (the normal revenge, not the next branch that got discontinued).
-
-## install
-
-add this as a plugin repository in revenge:
+plain vendetta-format plugins for revenge classic. one folder per plugin, install each one straight
+from its url, no repository list needed.
 
 ```
-https://ruinstudiooo.github.io/revenge-plugins/
+https://ruinstudiooo.github.io/revenge-plugins/GhostPing/
+https://ruinstudiooo.github.io/revenge-plugins/PlatformSpoofer/
 ```
 
-settings > plugins > add repository, paste that, then install whatever you want from the list.
+paste that in revenge, settings > plugins, where it asks for a source. revenge pulls
+`<url>/manifest.json` and `<url>/index.js`, checks the hash, done.
 
 ## platform spoofer
 
 makes your phone report itself as the desktop app, so everyone sees the desktop icon instead of the
 phone one, including people on stock discord.
 
-the gateway tells discord which platform a session is the moment it connects, in the identify frame:
+discord decides this on the server from the identify frame, the one the gateway sends right after
+connecting:
 
 ```json
-{ "op": 2, "d": { "token": "...", "properties": { "$browser": "Discord Android", "$device": "Pixel 7" } } }
+{ "op": 2, "d": { "properties": { "$browser": "Discord Android", "$device": "Pixel 7" } } }
 ```
 
 `$browser` and `$device` are what the server reads. the plugin hooks `WebSocket.prototype.send`,
-catches that one frame, swaps the properties for a desktop set, and lets everything else through
-untouched. token, presence, capabilities, resume, heartbeat, all byte identical.
+catches that frame, swaps the properties for a desktop set, and lets everything else through
+untouched. token, presence, heartbeat, resume, all byte identical.
 
-because the server does the classifying, there's nothing to fake on the other side. a normal discord
-user just sees a desktop icon.
+- desktop app or browser preset
+- the phone has to reconnect, so restart discord after flipping the switch
+- notifications keep working, push is registered separately from the gateway
 
-- two presets, desktop app and browser
-- the switch turns the hook off without unloading anything
-- the phone has to reconnect before it takes, so restart discord after flipping it
-- notifications are unaffected, they go through push registration, not the gateway
-
-`$client_version` still carries the mobile build number. discord doesn't classify on it, but if a
-future build starts caring, that field is the first place to look.
+`$client_version` still says the mobile build number. discord doesn't classify on it today, but if a
+future build starts caring, that is the first place to look.
 
 ## ghost ping
 
-someone pings you, then deletes the message to pretend nothing happened. this puts a toast on screen
-with who did it and what it said.
+someone pings you, then deletes the message to pretend nothing happened. toast with who did it and
+what it said.
 
-it listens on the flux bus:
-
-- `MESSAGE_CREATE` keeps the last 200 messages in memory, because the delete event only carries an id
+- `MESSAGE_CREATE` keeps the last 200 messages, because the delete event only carries an id
 - `MESSAGE_DELETE` looks that id up and decides if it was aimed at me
+- skips my own messages, bots, and deletes older than 15 minutes
 
-things it skips by default: my own messages, bots, and deletes of anything older than 15 minutes so
-cleaning out a channel doesn't rain toasts.
-
-there's a settings page inside revenge with the master switch, an @everyone / @here toggle, the bot
-filter, and how late still counts (5m / 15m / 1h / any).
+settings page has the master switch, @everyone / @here, the bot filter, and 5m / 15m / 1h / any.
 
 ## build
 
 ```sh
 npm install
-npm run build        # -> builds/<plugin>/index.js for every folder in src/
+npm run build        # rewrites <Plugin>/index.js and <Plugin>/manifest.json
 npm run dev          # rebuilds while you edit
 npm run typecheck
 ```
 
-classic revenge evals a bundle like this:
+the build does three things per plugin:
 
-```js
-(bunny, definePlugin) => { /* bundle */ return plugin?.default ?? plugin }
-```
+1. bundles `src/<Plugin>/index.ts` with esbuild, iife, `globalName: "plugin"`
+2. wraps it so the file is one expression, because revenge evals it as `vendetta => { return <file> }`
+3. writes the sha256 of the result into `manifest.json`
 
-so the build is esbuild with `format: "iife"` and `globalName: "plugin"`, which leaves the export
-sitting on a top level `plugin` variable exactly where the loader looks for it.
-
-after building, bump the version in `builds/<id>/manifest.json` **and** in `repo.json`. revenge
-compares the two when it checks for updates and ignores anything that isn't higher.
+the hash is generated, never typed. don't hand edit it, just rerun the build.
 
 ## layout
 
 ```
-repo.json                     what the plugin browser fetches first
-builds/
-  ghost-ping/
-    manifest.json             id, version, entry point
-    index.js                  the built bundle, committed on purpose
-  platform-spoofer/
-    manifest.json
-    index.js
+GhostPing/
+  manifest.json      name, authors, main, icon, hash
+  index.js           built, committed on purpose, this is what gets served
+PlatformSpoofer/
+  manifest.json
+  index.js
 src/
-  ghost-ping/                 flux listener and the delete logic
-  platform-spoofer/           gateway identify rewrite
+  GhostPing/         index.ts, settings.ts, shared.ts
+  PlatformSpoofer/   index.ts, settings.ts, identify.ts, shared.ts
 build.mjs
 ```
 
-`builds/` is what gets served, `src/` never is. github pages is pointed at the repo root, so both
-live side by side.
+`src/` is never served, the plugin folders are. pages points at the repo root so both are public.
