@@ -18,13 +18,13 @@ var plugin = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // src/index.ts
+  // src/ghost-ping/index.ts
   var index_exports = {};
   __export(index_exports, {
     default: () => index_default
   });
 
-  // src/shared.ts
+  // src/ghost-ping/shared.ts
   var DefaultSettings = {
     enabled: true,
     everyone: true,
@@ -45,7 +45,7 @@ var plugin = (() => {
     }
   }
 
-  // src/settings.ts
+  // src/ghost-ping/settings.ts
   var Ages = [
     { value: 5, label: "5m" },
     { value: 15, label: "15m" },
@@ -134,7 +134,7 @@ var plugin = (() => {
     pillTextActive: { color: "#ffffff", fontWeight: "600" }
   };
 
-  // src/index.ts
+  // src/ghost-ping/index.ts
   var recent = /* @__PURE__ */ new Map();
   var MaxRecent = 200;
   var dispose;

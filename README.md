@@ -12,6 +12,32 @@ https://ruinstudiooo.github.io/revenge-plugins/
 
 settings > plugins > add repository, paste that, then install whatever you want from the list.
 
+## platform spoofer
+
+makes your phone report itself as the desktop app, so everyone sees the desktop icon instead of the
+phone one, including people on stock discord.
+
+the gateway tells discord which platform a session is the moment it connects, in the identify frame:
+
+```json
+{ "op": 2, "d": { "token": "...", "properties": { "$browser": "Discord Android", "$device": "Pixel 7" } } }
+```
+
+`$browser` and `$device` are what the server reads. the plugin hooks `WebSocket.prototype.send`,
+catches that one frame, swaps the properties for a desktop set, and lets everything else through
+untouched. token, presence, capabilities, resume, heartbeat, all byte identical.
+
+because the server does the classifying, there's nothing to fake on the other side. a normal discord
+user just sees a desktop icon.
+
+- two presets, desktop app and browser
+- the switch turns the hook off without unloading anything
+- the phone has to reconnect before it takes, so restart discord after flipping it
+- notifications are unaffected, they go through push registration, not the gateway
+
+`$client_version` still carries the mobile build number. discord doesn't classify on it, but if a
+future build starts caring, that field is the first place to look.
+
 ## ghost ping
 
 someone pings you, then deletes the message to pretend nothing happened. this puts a toast on screen
@@ -32,11 +58,12 @@ filter, and how late still counts (5m / 15m / 1h / any).
 
 ```sh
 npm install
-npm run build        # -> builds/ghost-ping/index.js
+npm run build        # -> builds/<plugin>/index.js for every folder in src/
 npm run dev          # rebuilds while you edit
+npm run typecheck
 ```
 
-classic revenge evals the bundle like this:
+classic revenge evals a bundle like this:
 
 ```js
 (bunny, definePlugin) => { /* bundle */ return plugin?.default ?? plugin }
@@ -45,7 +72,7 @@ classic revenge evals the bundle like this:
 so the build is esbuild with `format: "iife"` and `globalName: "plugin"`, which leaves the export
 sitting on a top level `plugin` variable exactly where the loader looks for it.
 
-after building, bump the version in `builds/ghost-ping/manifest.json` **and** in `repo.json`. revenge
+after building, bump the version in `builds/<id>/manifest.json` **and** in `repo.json`. revenge
 compares the two when it checks for updates and ignores anything that isn't higher.
 
 ## layout
@@ -56,10 +83,12 @@ builds/
   ghost-ping/
     manifest.json             id, version, entry point
     index.js                  the built bundle, committed on purpose
+  platform-spoofer/
+    manifest.json
+    index.js
 src/
-  index.ts                    flux listener and the delete logic
-  settings.ts                 settings page
-  shared.ts                   settings shape, defaults, storage handle
+  ghost-ping/                 flux listener and the delete logic
+  platform-spoofer/           gateway identify rewrite
 build.mjs
 ```
 

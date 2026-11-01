@@ -5,5 +5,8 @@
 	},
 	"ghost-ping": {
 		"version": "1.0.0"
+	},
+	"platform-spoofer": {
+		"version": "1.0.0"
 	}
 }
