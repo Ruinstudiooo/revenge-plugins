@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "name": "Ruin plugins",
+  "description": "My Revenge plugins. Add this repo in Revenge and it shows up like any other.",
+  "plugins": {
+    "ruinstudiooo.ghost-ping": {
+      "name": "Ghost Ping",
+      "description": "Toasts you when someone deletes a message that pinged you.",
+      "author": "Ji-eun <1471868110553223371> (https://github.com/lizereride90 \"GitHub\")",
+      "icon": "BellIcon",
+      "channels": {
+        "latest": "1.0.0"
+      },
+      "versions": {
+        "1.0.0": {
+          "url": "https://ruinstudiooo.github.io/revenge-plugins/pool/ruinstudiooo.ghost-ping@1.0.0.zip",
+          "sha256": "916278b5a9782599baad6c99c71cda2f965719596fe85f5646b18397dc52ccb7",
+          "size": 1856,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    }
+  }
+}
