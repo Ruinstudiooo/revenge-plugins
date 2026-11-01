@@ -1,5 +1,5 @@
 {
-	"name": "My Plugin Repository",
-	"description": "Example plugin repository from the Revenge plugin template.",
+	"name": "Ruin plugins",
+	"description": "My Revenge plugins. Add this repo in Revenge and it shows up like any other.",
 	"channels": {}
 }

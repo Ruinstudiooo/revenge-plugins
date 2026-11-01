@@ -27,7 +27,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "revenge-plugin-template"
+rootProject.name = "revenge-plugins"
 
 val pluginRoots = listOf("plugins", "themes")
 
