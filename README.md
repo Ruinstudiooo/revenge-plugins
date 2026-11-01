@@ -1,59 +1,67 @@
 # Ruin plugins
 
-my revenge plugins. every folder inside `plugins/` is one plugin, and each one builds into its own zip.
+plugins for revenge classic (the normal revenge, not the next branch that got discontinued).
 
-this started from [revenge-plugin-template](https://github.com/revenge-mod/revenge-plugin-template).
-heads up, the template itself says revenge next is discontinued and the work moved to
-[valenced](https://github.com/Valenced/valenced). everything here still builds and runs on revenge as it is.
+## install
 
-## what's in here
+add this as a plugin repository in revenge:
 
-### ghost ping
+```
+https://ruinstudiooo.github.io/revenge-plugins/
+```
 
-someone pings you, then deletes the message to pretend it never happened. this puts a toast on screen
-with who did it and what the message said.
+settings > plugins > add repository, paste that, then install whatever you want from the list.
 
-- works off the delete event, so it catches editors deleting their own message too
-- settings for @everyone / @here pings, and for how late a delete still counts
-- ignores bots and your own messages by default
+## ghost ping
 
-settings live in the plugin page inside revenge, nothing else to configure.
+someone pings you, then deletes the message to pretend nothing happened. this puts a toast on screen
+with who did it and what it said.
+
+it listens on the flux bus:
+
+- `MESSAGE_CREATE` keeps the last 200 messages in memory, because the delete event only carries an id
+- `MESSAGE_DELETE` looks that id up and decides if it was aimed at me
+
+things it skips by default: my own messages, bots, and deletes of anything older than 15 minutes so
+cleaning out a channel doesn't rain toasts.
+
+there's a settings page inside revenge with the master switch, an @everyone / @here toggle, the bot
+filter, and how late still counts (5m / 15m / 1h / any).
 
 ## build
 
-needs node or bun. the native side needs jdk 25 and the android sdk, but ghost ping is js only so
-gradle never has to run for it.
-
 ```sh
 npm install
-npm run build           # every plugin -> plugins/<name>/build/js/index.js
-npm run build ghost-ping
+npm run build        # -> builds/ghost-ping/index.js
+npm run dev          # rebuilds while you edit
 ```
 
-packaged zips need the full toolchain:
+classic revenge evals the bundle like this:
 
-```sh
-./gradlew packageAllPlugins
+```js
+(bunny, definePlugin) => { /* bundle */ return plugin?.default ?? plugin }
 ```
 
-## try it before pushing
+so the build is esbuild with `format: "iife"` and `globalName: "plugin"`, which leaves the export
+sitting on a top level `plugin` variable exactly where the loader looks for it.
 
-```sh
-npm run serve
-```
-
-it builds the index from `build/dist` and serves it on port 8080. add that url as a repository inside
-revenge and the plugin shows up like any other.
+after building, bump the version in `builds/ghost-ping/manifest.json` **and** in `repo.json`. revenge
+compares the two when it checks for updates and ignores anything that isn't higher.
 
 ## layout
 
 ```
-plugins/
+repo.json                     what the plugin browser fetches first
+builds/
   ghost-ping/
-    manifest.json    id, version, entry point
-    index.tsx        the plugin itself
-    settings.tsx     the settings page
-    shared.ts        settings shape and defaults
-    tsconfig.json
-themes/              empty for now
+    manifest.json             id, version, entry point
+    index.js                  the built bundle, committed on purpose
+src/
+  index.ts                    flux listener and the delete logic
+  settings.ts                 settings page
+  shared.ts                   settings shape, defaults, storage handle
+build.mjs
 ```
+
+`builds/` is what gets served, `src/` never is. github pages is pointed at the repo root, so both
+live side by side.

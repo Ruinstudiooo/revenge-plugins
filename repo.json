@@ -1,0 +1,9 @@
+{
+	"$meta": {
+		"name": "Ruin plugins",
+		"description": "my revenge plugins"
+	},
+	"ghost-ping": {
+		"version": "1.0.0"
+	}
+}

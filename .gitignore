@@ -1,15 +1,5 @@
-# Gradle / Android
-.gradle/
-build/
-plugins/*/build/
-themes/*/build/
-local.properties
-.kotlin/
-
 # JS
 node_modules/
 
-# Misc
+# OS
 .DS_Store
-.idea/
-*.iml
