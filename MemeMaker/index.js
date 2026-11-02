@@ -280,7 +280,7 @@ var plugin = (() => {
     var _a, _b, _c, _d, _e;
     return (_e = (_c = (_b = selectedChannel()) != null ? _b : (_a = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _a.id) != null ? _c : ctx == null ? void 0 : ctx.channelId) != null ? _e : (_d = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _d.channelId;
   }
-  var DEBUG = true;
+  var DEBUG = false;
   function trace(message) {
     if (DEBUG) toast(message);
   }
@@ -508,7 +508,7 @@ var plugin = (() => {
     if (settings.memetext && register(memeTextCommand())) wanted.push("/memetext");
     if (!announced && wanted.length) {
       announced = true;
-      toast(`meme maker ready: ${wanted.join(" ")}`);
+      trace(`meme maker ready: ${wanted.join(" ")}`);
     }
   }
   var index_default = {

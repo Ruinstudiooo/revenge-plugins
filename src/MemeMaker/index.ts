@@ -36,9 +36,9 @@ function channelOf(ctx: any): string | undefined {
 	return selectedChannel() ?? ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId
 }
 
-// flipped on while the command is not posting on someone's build. it makes each
-// step visible as a toast so a failure is not silent.
-const DEBUG = true
+// per step toasts. off in the shipped build, flip it back on when a command
+// stops posting and the failure needs to be visible on the device.
+const DEBUG = false
 
 function trace(message: string) {
 	if (DEBUG) toast(message)
@@ -310,7 +310,7 @@ function sync() {
 	// one line on start so its obvious whether the plugin actually loaded
 	if (!announced && wanted.length) {
 		announced = true
-		toast(`meme maker ready: ${wanted.join(' ')}`)
+		trace(`meme maker ready: ${wanted.join(' ')}`)
 	}
 }
 
