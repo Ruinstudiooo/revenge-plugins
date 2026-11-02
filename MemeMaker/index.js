@@ -70,8 +70,7 @@ var plugin = (() => {
 
   // src/MemeMaker/groq.ts
   var Endpoint = "https://api.groq.com/openai/v1/chat/completions";
-  var DefaultModel = "llama-3.3-70b-versatile";
-  var BackupModel = "llama-3.1-8b-instant";
+  var DefaultModel = "llama-3.1-8b-instant";
   var GroqError = class extends Error {
     constructor(status, message) {
       super(message);
@@ -85,11 +84,6 @@ var plugin = (() => {
     } catch {
       return body;
     }
-  }
-  function missingModel(error) {
-    var _a;
-    const message = String((_a = error == null ? void 0 : error.message) != null ? _a : "");
-    return (error == null ? void 0 : error.status) === 404 || /model[^.]*(decommission|not found|does not exist|no longer)/i.test(message);
   }
   async function call(model, prompt, opts) {
     var _a, _b, _c, _d, _e, _f, _g;
@@ -139,13 +133,7 @@ var plugin = (() => {
     const key = String((_a = opts.key) != null ? _a : "").trim();
     if (!key) throw new Error("no groq api key saved yet, open the plugin settings and paste one");
     const model = ((_b = opts.model) == null ? void 0 : _b.trim()) || DefaultModel;
-    try {
-      return await call(model, prompt, opts);
-    } catch (error) {
-      if (!missingModel(error)) throw error;
-      if (model === BackupModel) throw error;
-      return call(BackupModel, prompt, opts);
-    }
+    return await call(model, prompt, opts);
   }
   function shorten(text, max = 1900) {
     const clean = text.trim();

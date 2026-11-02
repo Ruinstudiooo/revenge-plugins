@@ -1,10 +1,7 @@
 const Endpoint = 'https://api.groq.com/openai/v1/chat/completions'
 
 /** fast and good enough for a rewrite or a short answer */
-export const DefaultModel = 'llama-3.3-70b-versatile'
-
-/** groq retires models now and then, this is only asked when the pinned one is gone */
-const BackupModel = 'llama-3.1-8b-instant'
+export const DefaultModel = 'llama-3.1-8b-instant'
 
 export interface GenerateOptions {
 	key: string
@@ -29,11 +26,6 @@ function pickError(body: string) {
 	} catch {
 		return body
 	}
-}
-
-function missingModel(error: any) {
-	const message = String(error?.message ?? '')
-	return error?.status === 404 || /model[^.]*(decommission|not found|does not exist|no longer)/i.test(message)
 }
 
 async function call(model: string, prompt: string, opts: GenerateOptions): Promise<string> {
@@ -89,16 +81,7 @@ export async function generate(prompt: string, opts: GenerateOptions): Promise<s
 	if (!key) throw new Error('no groq api key saved yet, open the plugin settings and paste one')
 
 	const model = opts.model?.trim() || DefaultModel
-
-	try {
-		return await call(model, prompt, opts)
-	} catch (error: any) {
-		// a retired model is the only thing worth a second request. a rate limit
-		// or a blocked answer will just repeat itself and make the wait worse
-		if (!missingModel(error)) throw error
-		if (model === BackupModel) throw error
-		return call(BackupModel, prompt, opts)
-	}
+	return await call(model, prompt, opts)
 }
 
 /** discord cuts a message at 2000, leave room for the rest of the line */
