@@ -28,6 +28,14 @@ function channelOf(ctx: any): string | undefined {
 	return ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId
 }
 
+// flipped on while the command is not posting on someone's build. it makes each
+// step visible as a toast so a failure is not silent.
+const DEBUG = true
+
+function trace(message: string) {
+	if (DEBUG) toast(message)
+}
+
 /**
  * revenge normally posts whatever execute returns, but that hook sits behind a
  * patcher and silently does nothing when it misses. posting here first means the
@@ -36,41 +44,49 @@ function channelOf(ctx: any): string | undefined {
 function deliver(ctx: any, content: string) {
 	const channelId = channelOf(ctx)
 
-	if (channelId) {
-		const senders = [
-			() => vendetta.metro.findByProps?.('sendMessage', 'receiveMessage')?.sendMessage,
-			() => vendetta.metro.findByProps?.('sendMessage', 'editMessage')?.sendMessage,
-		]
+	if (!channelId) {
+		trace('meme maker: no channel in the command context')
+		return { content }
+	}
 
-		for (const get of senders) {
-			try {
-				const send = get()
-				if (typeof send !== 'function') continue
-				send(channelId, { content })
-				return undefined
-			} catch (error) {
-				console.error('[meme-maker] sendMessage failed', error)
-			}
-		}
+	const senders = [
+		() => vendetta.metro.findByProps?.('sendMessage', 'receiveMessage')?.sendMessage,
+		() => vendetta.metro.findByProps?.('sendMessage', 'editMessage')?.sendMessage,
+	]
 
-		// last resort, matches what the built in slash commands use
+	for (const get of senders) {
 		try {
-			const bot = vendetta.metro.findByProps?.('sendBotMessage')?.sendBotMessage
-			if (typeof bot === 'function') {
-				bot(channelId, { content })
-				return undefined
-			}
+			const send = get()
+			if (typeof send !== 'function') continue
+			send(channelId, { content })
+			trace('meme maker: posted')
+			return undefined
 		} catch (error) {
-			console.error('[meme-maker] sendBotMessage failed', error)
+			console.error('[meme-maker] sendMessage failed', error)
 		}
 	}
+
+	// last resort, matches what the built in slash commands use
+	try {
+		const bot = vendetta.metro.findByProps?.('sendBotMessage')?.sendBotMessage
+		if (typeof bot === 'function') {
+			bot(channelId, { content })
+			trace('meme maker: posted as bot message')
+			return undefined
+		}
+	} catch (error) {
+		console.error('[meme-maker] sendBotMessage failed', error)
+	}
+
+	trace('meme maker: could not post, handing the link back to revenge')
 
 	// let revenge do it, this is the path that usually works
 	return { content }
 }
 
 /** a command that throws inside execute takes the whole message with it, so catch here */
-function guarded(ctx: any, run: () => string) {
+function guarded(name: string, ctx: any, run: () => string) {
+	trace(`meme maker: /${name} ran`)
 	try {
 		return deliver(ctx, run())
 	} catch (error: any) {
@@ -87,19 +103,33 @@ function guarded(ctx: any, run: () => string) {
 function memeCommand() {
 	return {
 		name: 'meme',
+		displayName: 'meme',
 		description: 'make a meme',
+		displayDescription: 'make a meme',
+		applicationId: '-1',
+		type: 1,
+		inputType: 1,
 		options: [
 			{
 				name: 'template',
+				displayName: 'template',
 				description: 'template id like drake or stonks, blank picks a random one',
+				displayDescription: 'template id like drake or stonks, blank picks a random one',
 				type: Str,
 				required: false,
 			},
-			{ name: 'top', description: 'top line', type: Str, required: false },
-			{ name: 'bottom', description: 'bottom line', type: Str, required: false },
+			{ name: 'top', displayName: 'top', description: 'top line', displayDescription: 'top line', type: Str, required: false },
+			{
+				name: 'bottom',
+				displayName: 'bottom',
+				description: 'bottom line',
+				displayDescription: 'bottom line',
+				type: Str,
+				required: false,
+			},
 		],
 		execute(args: any[], ctx: any) {
-			return guarded(ctx, () => {
+			return guarded('meme', ctx, () => {
 				const opts = readOptions(args)
 				return memeUrl(opts.template ?? '', opts.top ?? '', opts.bottom ?? '')
 			})
@@ -110,14 +140,33 @@ function memeCommand() {
 function memeTextCommand() {
 	return {
 		name: 'memetext',
+		displayName: 'memetext',
 		description: 'put text on the last image posted in this channel',
+		displayDescription: 'put text on the last image posted in this channel',
+		applicationId: '-1',
+		type: 1,
+		inputType: 1,
 		options: [
-			{ name: 'text', description: 'what the picture should say', type: Str, required: true },
-			{ name: 'top', description: 'separate line above it', type: Str, required: false },
-			{ name: 'image', description: 'image url, if not the last one in the channel', type: Str, required: false },
+			{
+				name: 'text',
+				displayName: 'text',
+				description: 'what the picture should say',
+				displayDescription: 'what the picture should say',
+				type: Str,
+				required: true,
+			},
+			{ name: 'top', displayName: 'top', description: 'separate line above it', displayDescription: 'separate line above it', type: Str, required: false },
+			{
+				name: 'image',
+				displayName: 'image',
+				description: 'image url, if not the last one in the channel',
+				displayDescription: 'image url, if not the last one in the channel',
+				type: Str,
+				required: false,
+			},
 		],
 		execute(args: any[], ctx: any) {
-			return guarded(ctx, () => {
+			return guarded('memetext', ctx, () => {
 				const opts = readOptions(args)
 				const text = (opts.text ?? '').trim()
 				if (!text) return 'give me something to write first'
@@ -137,6 +186,13 @@ function register(command: any) {
 	try {
 		const dispose = vendetta.commands.registerCommand(command)
 		disposers.push(typeof dispose === 'function' ? dispose : () => {})
+
+		// revenge works out the id itself, a non numeric one means discord can
+		// list the command but never resolve it when you press send
+		if (!/^\d+$/.test(String(command.id))) {
+			trace(`meme maker: /${command.name} got a bad id (${command.id})`)
+		}
+
 		return true
 	} catch (error) {
 		fail(`could not add /${command.name}`, error)
