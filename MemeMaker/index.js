@@ -24,227 +24,6 @@ var plugin = (() => {
     default: () => index_default
   });
 
-  // src/MemeMaker/gemini.ts
-  var Base = "https://generativelanguage.googleapis.com/v1beta/models";
-  var StaticFallbacks = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite"
-  ];
-  var modelCache = /* @__PURE__ */ new Map();
-  var dry = /* @__PURE__ */ new Map();
-  function retryAfter(body) {
-    var _a, _b, _c;
-    const fallback = 10 * 60 * 1e3;
-    const ceiling = 6 * 3600 * 1e3;
-    const floor = 5 * 1e3;
-    try {
-      const details = (_c = (_b = (_a = JSON.parse(body)) == null ? void 0 : _a.error) == null ? void 0 : _b.details) != null ? _c : [];
-      for (const detail of details) {
-        const raw = detail == null ? void 0 : detail.retryDelay;
-        if (typeof raw === "string" && /^\d+(\.\d+)?s$/.test(raw)) {
-          return Math.min(Math.max(parseFloat(raw) * 1e3, floor), ceiling);
-        }
-      }
-    } catch {
-    }
-    const match = /retry in ([0-9hms.]+)/i.exec(body);
-    if (match) {
-      let ms = 0;
-      const units = /([\d.]+)([hms])/g;
-      let part;
-      while (part = units.exec(match[1])) {
-        const n = parseFloat(part[1]);
-        if (!Number.isFinite(n)) continue;
-        ms += part[2] === "h" ? n * 36e5 : part[2] === "m" ? n * 6e4 : n * 1e3;
-      }
-      if (ms > 0) return Math.min(Math.max(ms, floor), ceiling);
-    }
-    return fallback;
-  }
-  function noteDry(key, model, body, message) {
-    dry.set(`${key}:${model}`, { until: Date.now() + retryAfter(body), message });
-  }
-  function dryNote(key, model) {
-    const entry = dry.get(`${key}:${model}`);
-    if (!entry) return void 0;
-    if (entry.until <= Date.now()) {
-      dry.delete(`${key}:${model}`);
-      return void 0;
-    }
-    return entry.message;
-  }
-  var preferred = 0;
-  function parseKeys(raw) {
-    return String(raw != null ? raw : "").split(/[\s,]+/).map((key) => key.trim()).filter(Boolean).filter((key, index, all) => all.indexOf(key) === index);
-  }
-  function shortName(name) {
-    return String(name != null ? name : "").replace(/^models\//, "");
-  }
-  function pickError(body) {
-    var _a, _b, _c;
-    try {
-      return (_c = (_b = (_a = JSON.parse(body)) == null ? void 0 : _a.error) == null ? void 0 : _b.message) != null ? _c : body;
-    } catch {
-      return body;
-    }
-  }
-  async function request(url, init, timeout) {
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), timeout);
-    try {
-      return await fetch(url, { ...init, signal: abort.signal });
-    } catch (error) {
-      if ((error == null ? void 0 : error.name) === "AbortError") throw new Error("gemini took too long to answer");
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  async function availableModels(key, timeout) {
-    var _a;
-    const cached = modelCache.get(key);
-    if (cached == null ? void 0 : cached.length) return cached;
-    try {
-      const response = await request(`${Base}?key=${encodeURIComponent(key)}&pageSize=1000`, { method: "GET" }, timeout);
-      if (!response.ok) return void 0;
-      const data = JSON.parse(await response.text());
-      const list = ((_a = data == null ? void 0 : data.models) != null ? _a : []).filter((model) => {
-        var _a2, _b;
-        const methods = (_b = (_a2 = model == null ? void 0 : model.supportedGenerationMethods) != null ? _a2 : model == null ? void 0 : model.supportedActions) != null ? _b : [];
-        return Array.isArray(methods) && methods.includes("generateContent");
-      }).map((model) => shortName(model == null ? void 0 : model.name)).filter(Boolean);
-      if (!list.length) return void 0;
-      modelCache.set(key, list);
-      return list;
-    } catch {
-      return void 0;
-    }
-  }
-  function chooseModels(available, wanted) {
-    const name = (wanted != null ? wanted : "").trim();
-    const list = (available == null ? void 0 : available.length) ? available : StaticFallbacks;
-    const out = [];
-    const push = (model) => {
-      if (model && !out.includes(model)) out.push(model);
-    };
-    if (name && list.includes(name)) push(name);
-    for (const model of list) {
-      if (/flash/i.test(model) && !/thinking|exp|preview|learnlm/i.test(model)) push(model);
-    }
-    if (name && !out.includes(name)) push(name);
-    for (const model of list) push(model);
-    return out.length ? out : [name || StaticFallbacks[0]];
-  }
-  function supportsThinking(model) {
-    return /2\.5/i.test(model);
-  }
-  function httpError(status, message) {
-    return new Error(`gemini ${status}: ${message}`);
-  }
-  async function call(key, model, prompt, opts, thinking) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
-    const url = `${Base}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-    const generationConfig = {
-      temperature: (_a = opts.temperature) != null ? _a : 0.7,
-      maxOutputTokens: (_b = opts.maxTokens) != null ? _b : 1024
-    };
-    if (thinking && supportsThinking(model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
-    let response;
-    try {
-      response = await request(
-        url,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig
-          })
-        },
-        (_c = opts.timeout) != null ? _c : 3e4
-      );
-    } catch (error) {
-      return { retryKey: true, error: error instanceof Error ? error : new Error("gemini did not answer") };
-    }
-    const body = await response.text();
-    if (!response.ok) {
-      const message = pickError(body);
-      if (response.status === 400 || response.status === 404) return { retryModel: true };
-      if (response.status === 429) {
-        console.error(`[meme-maker] gemini 429 on ${model}`);
-        noteDry(key, model, body, `gemini 429: ${message}`);
-        return { retryModel: true, quota: true, error: httpError(429, message) };
-      }
-      console.error(`[meme-maker] gemini ${response.status}: ${message}`);
-      if (response.status === 401 || response.status === 403 || response.status >= 500) {
-        return { retryKey: true, error: httpError(response.status, message) };
-      }
-      throw new Error(`gemini ${response.status}: ${message}`);
-    }
-    const data = JSON.parse(body);
-    const text = ((_g = (_f = (_e = (_d = data == null ? void 0 : data.candidates) == null ? void 0 : _d[0]) == null ? void 0 : _e.content) == null ? void 0 : _f.parts) != null ? _g : []).map((part) => {
-      var _a2;
-      return (_a2 = part == null ? void 0 : part.text) != null ? _a2 : "";
-    }).join("").trim();
-    if (!text) {
-      const blocked = (_k = (_h = data == null ? void 0 : data.promptFeedback) == null ? void 0 : _h.blockReason) != null ? _k : (_j = (_i = data == null ? void 0 : data.candidates) == null ? void 0 : _i[0]) == null ? void 0 : _j.finishReason;
-      throw new Error(blocked ? `gemini refused (${blocked})` : "gemini sent an empty answer back");
-    }
-    return { text };
-  }
-  async function generate(prompt, opts) {
-    var _a, _b, _c, _d;
-    const keys = parseKeys(opts.keys.join(" "));
-    if (!keys.length) throw new Error("no gemini api key saved yet, open the plugin settings and paste one");
-    const timeout = (_a = opts.timeout) != null ? _a : 3e4;
-    let lastError;
-    let tried = 0;
-    let allQuota = true;
-    for (let step = 0; step < keys.length; step++) {
-      const index = (preferred + step) % keys.length;
-      const key = keys[index];
-      const all = chooseModels(await availableModels(key, timeout), opts.model);
-      tried++;
-      const models = all.filter((model) => !dryNote(key, model));
-      if (!models.length) {
-        lastError = new Error((_b = dryNote(key, all[0])) != null ? _b : "gemini is out of quota");
-        continue;
-      }
-      for (const model of models) {
-        let result;
-        try {
-          result = await call(key, model, prompt, opts, true);
-        } catch (error) {
-          lastError = error;
-          allQuota = false;
-          try {
-            result = await call(key, model, prompt, { ...opts, temperature: 0.4 }, true);
-          } catch (retry) {
-            lastError = retry;
-            continue;
-          }
-        }
-        if ("text" in result) {
-          preferred = index;
-          return result.text;
-        }
-        allQuota = allQuota && Boolean(result.quota);
-        lastError = (_c = result.error) != null ? _c : new Error(result.quota ? "gemini is out of quota" : `gemini does not have ${model} on this key`);
-        if ("retryKey" in result) break;
-      }
-    }
-    const detail = (_d = lastError == null ? void 0 : lastError.message) != null ? _d : "no answer";
-    const count = `${tried} key${tried === 1 ? "" : "s"}`;
-    const hint = allQuota ? "\ngoogle gives the free tier out per project and model, so keys made under the same project share the same 20 a day. make the extra keys on another google account, or turn on billing for that project." : "";
-    throw new Error(`${detail} (tried ${count})${hint}`);
-  }
-  function shorten(text, max = 1900) {
-    const clean = text.trim();
-    return clean.length > max ? `${clean.slice(0, max - 1)}\u2026` : clean;
-  }
-
   // src/MemeMaker/shared.ts
   var DefaultSettings = {
     meme: true,
@@ -253,8 +32,8 @@ var plugin = (() => {
     ask: true,
     rewrite: true,
     shakespeare: true,
-    keys: "",
-    model: "gemini-2.5-flash"
+    key: "",
+    model: ""
   };
   function store() {
     var _a, _b;
@@ -263,10 +42,16 @@ var plugin = (() => {
   function readSettings() {
     return { ...DefaultSettings, ...store() };
   }
-  function readKeys() {
-    var _a, _b;
+  function readKey() {
+    var _a;
     const saved = store();
-    return parseKeys((_b = (_a = saved.keys) != null ? _a : saved.apiKey) != null ? _b : "");
+    const direct = String((_a = saved.key) != null ? _a : "").trim();
+    if (direct) return direct;
+    for (const raw of [saved.keys, saved.apiKey]) {
+      const found = String(raw != null ? raw : "").split(/\s+/).find((part) => part.startsWith("gsk_"));
+      if (found) return found;
+    }
+    return "";
   }
   function writeSettings(patch) {
     Object.assign(store(), patch);
@@ -283,64 +68,139 @@ var plugin = (() => {
     }
   }
 
+  // src/MemeMaker/groq.ts
+  var Endpoint = "https://api.groq.com/openai/v1/chat/completions";
+  var DefaultModel = "llama-3.3-70b-versatile";
+  var BackupModel = "llama-3.1-8b-instant";
+  var GroqError = class extends Error {
+    constructor(status, message) {
+      super(message);
+      this.status = status;
+    }
+  };
+  function pickError(body) {
+    var _a, _b, _c;
+    try {
+      return (_c = (_b = (_a = JSON.parse(body)) == null ? void 0 : _a.error) == null ? void 0 : _b.message) != null ? _c : body;
+    } catch {
+      return body;
+    }
+  }
+  function missingModel(error) {
+    var _a;
+    const message = String((_a = error == null ? void 0 : error.message) != null ? _a : "");
+    return (error == null ? void 0 : error.status) === 404 || /model[^.]*(decommission|not found|does not exist|no longer)/i.test(message);
+  }
+  async function call(model, prompt, opts) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), (_a = opts.timeout) != null ? _a : 2e4);
+    let response;
+    try {
+      response = await fetch(Endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${opts.key.trim()}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: (_b = opts.temperature) != null ? _b : 0.7,
+          max_tokens: (_c = opts.maxTokens) != null ? _c : 1024,
+          stream: false
+        }),
+        signal: abort.signal
+      });
+    } catch (error) {
+      if ((error == null ? void 0 : error.name) === "AbortError") throw new Error("groq took too long, try once more");
+      throw new Error("groq is not reachable, check the connection");
+    } finally {
+      clearTimeout(timer);
+    }
+    const body = await response.text();
+    if (!response.ok) {
+      const message = pickError(body);
+      if (response.status === 401 || response.status === 403) {
+        throw new GroqError(response.status, "groq rejected the key, paste a fresh one in the plugin settings");
+      }
+      if (response.status === 429) {
+        throw new GroqError(response.status, `groq is rate limiting right now, give it a moment. ${message}`);
+      }
+      throw new GroqError(response.status, `groq ${response.status}: ${message}`);
+    }
+    const data = JSON.parse(body);
+    const text = String((_g = (_f = (_e = (_d = data == null ? void 0 : data.choices) == null ? void 0 : _d[0]) == null ? void 0 : _e.message) == null ? void 0 : _f.content) != null ? _g : "").trim();
+    if (!text) throw new Error("groq sent an empty answer back");
+    return text;
+  }
+  async function generate(prompt, opts) {
+    var _a, _b;
+    const key = String((_a = opts.key) != null ? _a : "").trim();
+    if (!key) throw new Error("no groq api key saved yet, open the plugin settings and paste one");
+    const model = ((_b = opts.model) == null ? void 0 : _b.trim()) || DefaultModel;
+    try {
+      return await call(model, prompt, opts);
+    } catch (error) {
+      if (!missingModel(error)) throw error;
+      if (model === BackupModel) throw error;
+      return call(BackupModel, prompt, opts);
+    }
+  }
+  function shorten(text, max = 1900) {
+    const clean = text.trim();
+    return clean.length > max ? `${clean.slice(0, max - 1)}\u2026` : clean;
+  }
+
   // src/MemeMaker/settings.ts
   function SettingsScreen() {
     var _a, _b, _c, _d;
     const React = vendetta.metro.common.React;
     const RN = vendetta.metro.common.ReactNative;
     const [state, setState] = React.useState(() => readSettings());
-    const [keys, setKeys] = React.useState(String((_a = state.keys) != null ? _a : ""));
+    const [key, setKey] = React.useState(String((_a = state.key) != null ? _a : ""));
     const [model, setModel] = React.useState(String((_b = state.model) != null ? _b : ""));
     const [savedAt, setSavedAt] = React.useState(0);
     const keyTimer = React.useRef(null);
     const modelTimer = React.useRef(null);
-    const latestKeys = React.useRef(String((_c = state.keys) != null ? _c : ""));
+    const latestKey = React.useRef(String((_c = state.key) != null ? _c : ""));
     const latestModel = React.useRef(String((_d = state.model) != null ? _d : ""));
     const toggle = (name) => {
       const next = !state[name];
       writeSettings({ [name]: next });
       setState({ ...state, [name]: next });
     };
-    const cleanKeys = (raw) => raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join("\n");
-    const persistKeys = (raw) => {
-      writeSettings({ keys: cleanKeys(raw) });
-      setSavedAt(Date.now());
-    };
-    const persistModel = (raw) => {
-      writeSettings({ model: raw.trim() });
-      setSavedAt(Date.now());
-    };
-    const onChangeKeys = (text) => {
-      latestKeys.current = text;
-      setKeys(text);
+    const onChangeKey = (text) => {
+      latestKey.current = text;
+      setKey(text);
       if (keyTimer.current) clearTimeout(keyTimer.current);
-      keyTimer.current = setTimeout(() => persistKeys(text), 700);
+      keyTimer.current = setTimeout(() => {
+        writeSettings({ key: latestKey.current.trim() });
+        setSavedAt(Date.now());
+      }, 600);
     };
     const onChangeModel = (text) => {
       latestModel.current = text;
       setModel(text);
       if (modelTimer.current) clearTimeout(modelTimer.current);
-      modelTimer.current = setTimeout(() => persistModel(text), 700);
+      modelTimer.current = setTimeout(() => {
+        writeSettings({ model: latestModel.current.trim() });
+        setSavedAt(Date.now());
+      }, 600);
     };
-    const saveKeys = () => {
+    const save = () => {
       if (keyTimer.current) clearTimeout(keyTimer.current);
-      const value = cleanKeys(latestKeys.current);
-      latestKeys.current = value;
-      setKeys(value);
-      writeSettings({ keys: value });
-      setState({ ...state, keys: value });
-      setSavedAt(Date.now());
-    };
-    const saveModel = () => {
       if (modelTimer.current) clearTimeout(modelTimer.current);
-      const value = latestModel.current.trim();
-      latestModel.current = value;
-      setModel(value);
-      writeSettings({ model: value });
-      setState({ ...state, model: value });
+      const cleanKey = latestKey.current.trim();
+      const cleanModel = latestModel.current.trim();
+      latestKey.current = cleanKey;
+      latestModel.current = cleanModel;
+      setKey(cleanKey);
+      setModel(cleanModel);
+      writeSettings({ key: cleanKey, model: cleanModel });
+      setState({ ...state, key: cleanKey, model: cleanModel });
       setSavedAt(Date.now());
     };
-    const saved = parseKeys(keys).length;
     const row = (name, label, sub) => React.createElement(
       RN.View,
       { key: name, style: styles.row },
@@ -357,19 +217,20 @@ var plugin = (() => {
       { key: config.label, style: styles.field },
       React.createElement(RN.Text, { style: styles.label }, config.label),
       React.createElement(RN.TextInput, {
-        style: [styles.input, config.multiline ? styles.multiline : null],
+        style: styles.input,
         value: config.value,
         placeholder: config.placeholder,
         placeholderTextColor: "#6b6f76",
         autoCapitalize: "none",
         autoCorrect: false,
-        multiline: Boolean(config.multiline),
+        secureTextEntry: config.label === "api key",
         onChangeText: config.onChange,
         onBlur: config.onBlur,
-        onSubmitEditing: config.multiline ? void 0 : config.onBlur
+        onSubmitEditing: config.onBlur
       }),
       config.hint ? React.createElement(RN.Text, { style: styles.hint }, config.hint) : null
     );
+    const looksRight = key.trim().startsWith("gsk_");
     return React.createElement(
       RN.ScrollView,
       { style: styles.screen, contentContainerStyle: styles.content },
@@ -377,47 +238,41 @@ var plugin = (() => {
       row("meme", "/meme", "any template, top and bottom text, or a random one"),
       row("memetext", "/memetext", "writes on the last picture posted in the channel"),
       row("random", "/random", "posts a random meme"),
-      row("ask", "/ask", "asks gemini a question"),
+      row("ask", "/ask", "asks groq a question"),
       row("rewrite", "/r", "fixes grammar and wording"),
       row("shakespeare", "/shakespeare", "rewrites your line like shakespeare"),
-      React.createElement(RN.Text, { style: styles.section }, "gemini"),
+      React.createElement(RN.Text, { style: styles.section }, "groq"),
       field({
-        label: "api keys",
-        value: keys,
-        placeholder: "one key per line",
-        onChange: onChangeKeys,
-        onBlur: saveKeys,
-        multiline: true,
-        hint: saved ? `${saved} key${saved === 1 ? "" : "s"} in the box, saved as you type. each one gets a turn until somebody answers` : "paste one or more keys, one per line"
+        label: "api key",
+        value: key,
+        placeholder: "gsk_...",
+        onChange: onChangeKey,
+        onBlur: save,
+        hint: key.trim() ? looksRight ? "looks like a groq key. one key, one request, no queue" : "groq keys start with gsk_, this one does not" : "paste your key, it saves as you type"
       }),
-      React.createElement(
-        RN.Pressable,
-        { onPress: saveKeys, style: styles.button },
-        React.createElement(RN.Text, { style: styles.buttonText }, "save keys")
-      ),
       field({
         label: "model",
         value: model,
-        placeholder: "gemini-2.5-flash",
+        placeholder: DefaultModel,
         onChange: onChangeModel,
-        onBlur: saveModel,
-        hint: "blank lets the plugin ask your key which models it has and pick a flash one"
+        onBlur: save,
+        hint: `blank uses ${DefaultModel}`
       }),
-      savedAt ? React.createElement(RN.Text, { style: styles.hint }, "saved. go back and run a command, no restart needed.") : null,
+      React.createElement(
+        RN.Pressable,
+        { onPress: save, style: styles.button },
+        React.createElement(RN.Text, { style: styles.buttonText }, "save")
+      ),
+      savedAt ? React.createElement(RN.Text, { style: styles.hint }, "saved, go run a command") : null,
       React.createElement(
         RN.Text,
         { style: styles.note },
-        "free keys from aistudio.google.com/apikey. keys stay in this plugin storage on your phone and only go to google."
+        "free key from console.groq.com/keys. it stays in this plugin storage on your phone and only goes to groq."
       ),
       React.createElement(
         RN.Text,
         { style: styles.note },
-        "google hands out the free tier per project, not per key. keys made under the same project all share the same 20 requests a day, so make extra keys on another google account."
-      ),
-      React.createElement(
-        RN.Text,
-        { style: styles.note },
-        "when a model runs out the plugin moves to the next model on that same key, lite and 2.0 included, then to the next key. you only see an error when the whole stack is empty."
+        "no key rotation any more. one key, one call, so a command answers in a second or two instead of trying every model and key in turn."
       ),
       React.createElement(
         RN.Text,
@@ -456,7 +311,6 @@ var plugin = (() => {
       paddingVertical: 10,
       fontSize: 15
     },
-    multiline: { minHeight: 96, textAlignVertical: "top" },
     button: {
       alignSelf: "flex-start",
       backgroundColor: "#5865f2",
@@ -528,7 +382,7 @@ var plugin = (() => {
   }
 
   // src/MemeMaker/meme.ts
-  var Base2 = "https://api.memegen.link/images";
+  var Base = "https://api.memegen.link/images";
   function memeUrl(template, top, bottom) {
     const name = cleanTemplate(template) || randomTemplate();
     const segments = [];
@@ -536,11 +390,11 @@ var plugin = (() => {
     else if (bottom) segments.push("_");
     if (bottom) segments.push(encode(bottom));
     const path = segments.length ? `/${segments.join("/")}` : "";
-    return `${Base2}/${name}${path}.png?width=600&font=impact`;
+    return `${Base}/${name}${path}.png?width=600&font=impact`;
   }
   function customUrl(background, top, bottom) {
     const query = `background=${encodeURIComponent(background)}&width=600&font=impact`;
-    return `${Base2}/custom/${top ? encode(top) : "_"}/${bottom ? encode(bottom) : "_"}.png?${query}`;
+    return `${Base}/custom/${top ? encode(top) : "_"}/${bottom ? encode(bottom) : "_"}.png?${query}`;
   }
   function encode(text) {
     return encodeURIComponent(text.trim());
@@ -785,10 +639,10 @@ var plugin = (() => {
           const text = ((_a = opts[config.option]) != null ? _a : "").trim();
           if (!text) return `type something after /${config.name}`;
           const settings = readSettings();
-          const keys = readKeys();
-          toast(keys.length > 1 ? `meme maker: asking gemini (${keys.length} keys)` : "meme maker: asking gemini");
+          const key = readKey();
+          toast(key ? "meme maker: asking groq" : "meme maker: no groq key saved");
           const answer = await generate(config.build(text), {
-            keys,
+            key,
             model: settings.model,
             temperature: config.temperature
           });
@@ -909,7 +763,7 @@ var plugin = (() => {
   function askCommand() {
     return aiCommand({
       name: "ask",
-      description: "ask gemini anything",
+      description: "ask groq anything",
       option: "question",
       optionDescription: "what you want to know",
       build: (text) => `You are answering a question inside a discord chat. Be direct, useful and as short as the question allows. Do not repeat the question back.

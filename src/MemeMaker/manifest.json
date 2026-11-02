@@ -1,6 +1,6 @@
 {
 	"name": "Meme Maker",
-	"description": "memes plus /ask, /r and /shakespeare through gemini",
+	"description": "memes plus /ask, /r and /shakespeare through groq",
 	"authors": [
 		{
 			"name": "Ji-eun",

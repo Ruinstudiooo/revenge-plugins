@@ -1,8 +1,8 @@
 import SettingsScreen from './settings'
-import { bindChange, readKeys, readSettings } from './shared'
+import { bindChange, readKey, readSettings } from './shared'
 import { customUrl, lastImageUrl, memeUrl, readOptions } from './meme'
 import { randomTemplate } from './templates'
-import { generate, shorten } from './gemini'
+import { generate, shorten } from './groq'
 
 // ApplicationCommandOptionType.STRING. the enum is not exported to plugins.
 const Str = 3
@@ -184,7 +184,7 @@ async function guarded(name: string, ctx: any, run: () => string | Promise<strin
 	}
 }
 
-/** shared shell for the three gemini commands */
+/** shared shell for the three groq commands */
 function aiCommand(config: {
 	name: string
 	description: string
@@ -218,11 +218,11 @@ function aiCommand(config: {
 				if (!text) return `type something after /${config.name}`
 
 				const settings = readSettings()
-				const keys = readKeys()
-				toast(keys.length > 1 ? `meme maker: asking gemini (${keys.length} keys)` : 'meme maker: asking gemini')
+				const key = readKey()
+				toast(key ? 'meme maker: asking groq' : 'meme maker: no groq key saved')
 
 				const answer = await generate(config.build(text), {
-					keys,
+					key,
 					model: settings.model,
 					temperature: config.temperature,
 				})
@@ -347,7 +347,7 @@ function memeTextCommand() {
 function askCommand() {
 	return aiCommand({
 		name: 'ask',
-		description: 'ask gemini anything',
+		description: 'ask groq anything',
 		option: 'question',
 		optionDescription: 'what you want to know',
 		build: text =>

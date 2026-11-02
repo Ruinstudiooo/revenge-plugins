@@ -1,5 +1,3 @@
-import { parseKeys } from './gemini'
-
 export interface Settings {
 	/** the /meme command */
 	meme: boolean
@@ -13,9 +11,9 @@ export interface Settings {
 	rewrite: boolean
 	/** the /shakespeare command */
 	shakespeare: boolean
-	/** gemini api keys, one per line, used in order until one answers */
-	keys: string
-	/** gemini model name, blank means pick one the key actually has */
+	/** groq api key, needed by ask, r and shakespeare */
+	key: string
+	/** groq model name, blank means the default one */
 	model: string
 }
 
@@ -26,8 +24,8 @@ export const DefaultSettings: Settings = {
 	ask: true,
 	rewrite: true,
 	shakespeare: true,
-	keys: '',
-	model: 'gemini-2.5-flash',
+	key: '',
+	model: '',
 }
 
 export function store(): Record<string, any> {
@@ -38,10 +36,23 @@ export function readSettings(): Settings {
 	return { ...DefaultSettings, ...store() }
 }
 
-/** the raw key list, older installs kept a single key under apiKey */
-export function readKeys(): string[] {
+/**
+ * the saved key. older builds kept gemini keys in `keys` and `apiKey`, those are
+ * left alone, only something shaped like a groq key is picked up from them
+ */
+export function readKey(): string {
 	const saved = store()
-	return parseKeys(saved.keys ?? saved.apiKey ?? '')
+	const direct = String(saved.key ?? '').trim()
+	if (direct) return direct
+
+	for (const raw of [saved.keys, saved.apiKey]) {
+		const found = String(raw ?? '')
+			.split(/\s+/)
+			.find(part => part.startsWith('gsk_'))
+		if (found) return found
+	}
+
+	return ''
 }
 
 export function writeSettings(patch: Partial<Settings>) {

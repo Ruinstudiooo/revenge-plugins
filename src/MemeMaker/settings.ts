@@ -1,6 +1,6 @@
 import { readSettings, writeSettings } from './shared'
 import type { Settings } from './shared'
-import { parseKeys } from './gemini'
+import { DefaultModel } from './groq'
 
 type Toggle = 'meme' | 'memetext' | 'random' | 'ask' | 'rewrite' | 'shakespeare'
 
@@ -8,14 +8,14 @@ export default function SettingsScreen() {
 	const React = vendetta.metro.common.React
 	const RN = vendetta.metro.common.ReactNative
 	const [state, setState] = React.useState(() => readSettings() as Settings)
-	const [keys, setKeys] = React.useState(String(state.keys ?? ''))
+	const [key, setKey] = React.useState(String(state.key ?? ''))
 	const [model, setModel] = React.useState(String(state.model ?? ''))
 	const [savedAt, setSavedAt] = React.useState(0)
 	const keyTimer = React.useRef(null)
 	const modelTimer = React.useRef(null)
-	// latest text regardless of when a handler was captured, a press or a blur
-	// always writes what is actually in the box
-	const latestKeys = React.useRef(String(state.keys ?? ''))
+	// what is actually in the boxes right now, so a press or a blur never writes
+	// an older value back over a fresh paste
+	const latestKey = React.useRef(String(state.key ?? ''))
 	const latestModel = React.useRef(String(state.model ?? ''))
 
 	const toggle = (name: Toggle) => {
@@ -24,61 +24,41 @@ export default function SettingsScreen() {
 		setState({ ...state, [name]: next })
 	}
 
-	/** tidy the box up, then hand it back to the storage */
-	const cleanKeys = (raw: string) =>
-		raw
-			.split(/\r?\n/)
-			.map((line: string) => line.trim())
-			.filter(Boolean)
-			.join('\n')
-
-	const persistKeys = (raw: string) => {
-		writeSettings({ keys: cleanKeys(raw) })
-		setSavedAt(Date.now())
-	}
-
-	const persistModel = (raw: string) => {
-		writeSettings({ model: raw.trim() })
-		setSavedAt(Date.now())
-	}
-
-	// typing saves too. the old version only wrote on blur and a pasted block
-	// never blurred on some keyboards, so only the old single key stayed behind
-	const onChangeKeys = (text: string) => {
-		latestKeys.current = text
-		setKeys(text)
+	const onChangeKey = (text: string) => {
+		latestKey.current = text
+		setKey(text)
 		if (keyTimer.current) clearTimeout(keyTimer.current)
-		keyTimer.current = setTimeout(() => persistKeys(text), 700)
+		keyTimer.current = setTimeout(() => {
+			writeSettings({ key: latestKey.current.trim() })
+			setSavedAt(Date.now())
+		}, 600)
 	}
 
 	const onChangeModel = (text: string) => {
 		latestModel.current = text
 		setModel(text)
 		if (modelTimer.current) clearTimeout(modelTimer.current)
-		modelTimer.current = setTimeout(() => persistModel(text), 700)
+		modelTimer.current = setTimeout(() => {
+			writeSettings({ model: latestModel.current.trim() })
+			setSavedAt(Date.now())
+		}, 600)
 	}
 
-	const saveKeys = () => {
+	const save = () => {
 		if (keyTimer.current) clearTimeout(keyTimer.current)
-		const value = cleanKeys(latestKeys.current)
-		latestKeys.current = value
-		setKeys(value)
-		writeSettings({ keys: value })
-		setState({ ...state, keys: value })
-		setSavedAt(Date.now())
-	}
-
-	const saveModel = () => {
 		if (modelTimer.current) clearTimeout(modelTimer.current)
-		const value = latestModel.current.trim()
-		latestModel.current = value
-		setModel(value)
-		writeSettings({ model: value })
-		setState({ ...state, model: value })
+
+		const cleanKey = latestKey.current.trim()
+		const cleanModel = latestModel.current.trim()
+
+		latestKey.current = cleanKey
+		latestModel.current = cleanModel
+		setKey(cleanKey)
+		setModel(cleanModel)
+		writeSettings({ key: cleanKey, model: cleanModel })
+		setState({ ...state, key: cleanKey, model: cleanModel })
 		setSavedAt(Date.now())
 	}
-
-	const saved = parseKeys(keys).length
 
 	const row = (name: Toggle, label: string, sub: string) =>
 		React.createElement(
@@ -99,7 +79,6 @@ export default function SettingsScreen() {
 		placeholder: string
 		onChange: (text: string) => void
 		onBlur: () => void
-		multiline?: boolean
 		hint?: string
 	}) =>
 		React.createElement(
@@ -107,19 +86,21 @@ export default function SettingsScreen() {
 			{ key: config.label, style: styles.field },
 			React.createElement(RN.Text, { style: styles.label }, config.label),
 			React.createElement(RN.TextInput, {
-				style: [styles.input, config.multiline ? styles.multiline : null],
+				style: styles.input,
 				value: config.value,
 				placeholder: config.placeholder,
 				placeholderTextColor: '#6b6f76',
 				autoCapitalize: 'none',
 				autoCorrect: false,
-				multiline: Boolean(config.multiline),
+				secureTextEntry: config.label === 'api key',
 				onChangeText: config.onChange,
 				onBlur: config.onBlur,
-				onSubmitEditing: config.multiline ? undefined : config.onBlur,
+				onSubmitEditing: config.onBlur,
 			}),
 			config.hint ? React.createElement(RN.Text, { style: styles.hint }, config.hint) : null,
 		)
+
+	const looksRight = key.trim().startsWith('gsk_')
 
 	return React.createElement(
 		RN.ScrollView,
@@ -128,52 +109,46 @@ export default function SettingsScreen() {
 		row('meme', '/meme', 'any template, top and bottom text, or a random one'),
 		row('memetext', '/memetext', 'writes on the last picture posted in the channel'),
 		row('random', '/random', 'posts a random meme'),
-		row('ask', '/ask', 'asks gemini a question'),
+		row('ask', '/ask', 'asks groq a question'),
 		row('rewrite', '/r', 'fixes grammar and wording'),
 		row('shakespeare', '/shakespeare', 'rewrites your line like shakespeare'),
 
-		React.createElement(RN.Text, { style: styles.section }, 'gemini'),
+		React.createElement(RN.Text, { style: styles.section }, 'groq'),
 		field({
-			label: 'api keys',
-			value: keys,
-			placeholder: 'one key per line',
-			onChange: onChangeKeys,
-			onBlur: saveKeys,
-			multiline: true,
-			hint: saved
-				? `${saved} key${saved === 1 ? '' : 's'} in the box, saved as you type. each one gets a turn until somebody answers`
-				: 'paste one or more keys, one per line',
+			label: 'api key',
+			value: key,
+			placeholder: 'gsk_...',
+			onChange: onChangeKey,
+			onBlur: save,
+			hint: key.trim()
+				? looksRight
+					? 'looks like a groq key. one key, one request, no queue'
+					: 'groq keys start with gsk_, this one does not'
+				: 'paste your key, it saves as you type',
 		}),
-		React.createElement(
-			RN.Pressable,
-			{ onPress: saveKeys, style: styles.button },
-			React.createElement(RN.Text, { style: styles.buttonText }, 'save keys'),
-		),
 		field({
 			label: 'model',
 			value: model,
-			placeholder: 'gemini-2.5-flash',
+			placeholder: DefaultModel,
 			onChange: onChangeModel,
-			onBlur: saveModel,
-			hint: 'blank lets the plugin ask your key which models it has and pick a flash one',
+			onBlur: save,
+			hint: `blank uses ${DefaultModel}`,
 		}),
-		savedAt
-			? React.createElement(RN.Text, { style: styles.hint }, 'saved. go back and run a command, no restart needed.')
-			: null,
+		React.createElement(
+			RN.Pressable,
+			{ onPress: save, style: styles.button },
+			React.createElement(RN.Text, { style: styles.buttonText }, 'save'),
+		),
+		savedAt ? React.createElement(RN.Text, { style: styles.hint }, 'saved, go run a command') : null,
 		React.createElement(
 			RN.Text,
 			{ style: styles.note },
-			'free keys from aistudio.google.com/apikey. keys stay in this plugin storage on your phone and only go to google.',
+			'free key from console.groq.com/keys. it stays in this plugin storage on your phone and only goes to groq.',
 		),
 		React.createElement(
 			RN.Text,
 			{ style: styles.note },
-			'google hands out the free tier per project, not per key. keys made under the same project all share the same 20 requests a day, so make extra keys on another google account.',
-		),
-		React.createElement(
-			RN.Text,
-			{ style: styles.note },
-			'when a model runs out the plugin moves to the next model on that same key, lite and 2.0 included, then to the next key. you only see an error when the whole stack is empty.',
+			'no key rotation any more. one key, one call, so a command answers in a second or two instead of trying every model and key in turn.',
 		),
 		React.createElement(
 			RN.Text,
@@ -213,7 +188,6 @@ const styles = {
 		paddingVertical: 10,
 		fontSize: 15,
 	},
-	multiline: { minHeight: 96, textAlignVertical: 'top' },
 	button: {
 		alignSelf: 'flex-start',
 		backgroundColor: '#5865f2',

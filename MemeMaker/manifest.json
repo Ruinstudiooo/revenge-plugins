@@ -1,6 +1,6 @@
 {
 	"name": "Meme Maker",
-	"description": "memes plus /ask, /r and /shakespeare through gemini",
+	"description": "memes plus /ask, /r and /shakespeare through groq",
 	"authors": [
 		{
 			"name": "Ji-eun",
@@ -11,5 +11,5 @@
 	"vendetta": {
 		"icon": "ic_image_24px"
 	},
-	"hash": "5dee47ba34e078463a466bb26f9ef88b55cd5576be59d82088145682c76f9488"
+	"hash": "2539466c69ab87f62718fcb6df9c3971c54f324c8cc2f9b0edcafaeac517a74d"
 }
