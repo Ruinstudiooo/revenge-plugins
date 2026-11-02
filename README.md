@@ -77,9 +77,17 @@ an `image:` option overrides the search if you want a specific url.
 ```
 
 the three text commands go through the gemini api, so they need a key. paste one or more into the
-plugin settings, one per line. keys are tried in order and the next one takes over when one is
-rejected, rate limited or out of quota, so a stack of free keys keeps working. the key that answered
-last is used first next time.
+plugin settings, one per line. the box saves as you type and there is a save button too, so a paste
+is not lost when the keyboard never blurs. keys are tried in order and the next one takes over when
+one is rejected, rate limited or out of quota. the key that answered last is used first next time.
+
+a 429 does not drop the key. google hands quota out per model, not per key, so an exhausted
+`gemini-2.5-flash` falls through to the next model the same key has, lite and 2.0 included, and only
+then to the next key. if every model on every key is dry the error says so and tells you why.
+
+that error usually means the keys all live under one google project. free tier quota is counted per
+project and model, so ten keys from the same project share one 20 a day bucket. keys made on another
+account get their own.
 
 | command | what it does |
 | --- | --- |
@@ -96,6 +104,9 @@ model names are not guessed. the plugin asks the key what it can `generateConten
 your preferred name if the key has it, otherwise a flash model from that list. that is what kills
 the `404 ... is not found for API version v1beta` answer, since a key is never asked for a model it
 does not have. leave the model field blank to always take the list, or pin a name the key has.
+
+the generation call asks for `thinkingBudget: 0` on 2.5 models. without it the model spends the
+whole token budget thinking and hands back an empty answer, which used to look like a broken key.
 
 images are rendered by `api.memegen.link`, so no image library ships in the bundle and the meme
 commands need internet to work.

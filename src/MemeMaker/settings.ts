@@ -10,6 +10,13 @@ export default function SettingsScreen() {
 	const [state, setState] = React.useState(() => readSettings() as Settings)
 	const [keys, setKeys] = React.useState(String(state.keys ?? ''))
 	const [model, setModel] = React.useState(String(state.model ?? ''))
+	const [savedAt, setSavedAt] = React.useState(0)
+	const keyTimer = React.useRef(null)
+	const modelTimer = React.useRef(null)
+	// latest text regardless of when a handler was captured, a press or a blur
+	// always writes what is actually in the box
+	const latestKeys = React.useRef(String(state.keys ?? ''))
+	const latestModel = React.useRef(String(state.model ?? ''))
 
 	const toggle = (name: Toggle) => {
 		const next = !state[name]
@@ -17,26 +24,61 @@ export default function SettingsScreen() {
 		setState({ ...state, [name]: next })
 	}
 
-	const saved = parseKeys(keys).length
-
-	const saveKeys = () => {
-		const value = keys
+	/** tidy the box up, then hand it back to the storage */
+	const cleanKeys = (raw: string) =>
+		raw
 			.split(/\r?\n/)
 			.map((line: string) => line.trim())
 			.filter(Boolean)
 			.join('\n')
 
+	const persistKeys = (raw: string) => {
+		writeSettings({ keys: cleanKeys(raw) })
+		setSavedAt(Date.now())
+	}
+
+	const persistModel = (raw: string) => {
+		writeSettings({ model: raw.trim() })
+		setSavedAt(Date.now())
+	}
+
+	// typing saves too. the old version only wrote on blur and a pasted block
+	// never blurred on some keyboards, so only the old single key stayed behind
+	const onChangeKeys = (text: string) => {
+		latestKeys.current = text
+		setKeys(text)
+		if (keyTimer.current) clearTimeout(keyTimer.current)
+		keyTimer.current = setTimeout(() => persistKeys(text), 700)
+	}
+
+	const onChangeModel = (text: string) => {
+		latestModel.current = text
+		setModel(text)
+		if (modelTimer.current) clearTimeout(modelTimer.current)
+		modelTimer.current = setTimeout(() => persistModel(text), 700)
+	}
+
+	const saveKeys = () => {
+		if (keyTimer.current) clearTimeout(keyTimer.current)
+		const value = cleanKeys(latestKeys.current)
+		latestKeys.current = value
 		setKeys(value)
 		writeSettings({ keys: value })
 		setState({ ...state, keys: value })
+		setSavedAt(Date.now())
 	}
 
 	const saveModel = () => {
-		const value = model.trim()
+		if (modelTimer.current) clearTimeout(modelTimer.current)
+		const value = latestModel.current.trim()
+		latestModel.current = value
 		setModel(value)
 		writeSettings({ model: value })
 		setState({ ...state, model: value })
+		setSavedAt(Date.now())
 	}
+
+	const saved = parseKeys(keys).length
 
 	const row = (name: Toggle, label: string, sub: string) =>
 		React.createElement(
@@ -95,21 +137,29 @@ export default function SettingsScreen() {
 			label: 'api keys',
 			value: keys,
 			placeholder: 'one key per line',
-			onChange: setKeys,
+			onChange: onChangeKeys,
 			onBlur: saveKeys,
 			multiline: true,
 			hint: saved
-				? `${saved} key${saved === 1 ? '' : 's'} saved, used in this order and the next one takes over when one fails`
+				? `${saved} key${saved === 1 ? '' : 's'} in the box, saved as you type. each one gets a turn until somebody answers`
 				: 'paste one or more keys, one per line',
 		}),
+		React.createElement(
+			RN.Pressable,
+			{ onPress: saveKeys, style: styles.button },
+			React.createElement(RN.Text, { style: styles.buttonText }, 'save keys'),
+		),
 		field({
 			label: 'model',
 			value: model,
 			placeholder: 'gemini-2.5-flash',
-			onChange: setModel,
+			onChange: onChangeModel,
 			onBlur: saveModel,
 			hint: 'blank lets the plugin ask your key which models it has and pick a flash one',
 		}),
+		savedAt
+			? React.createElement(RN.Text, { style: styles.hint }, 'saved. go back and run a command, no restart needed.')
+			: null,
 		React.createElement(
 			RN.Text,
 			{ style: styles.note },
@@ -118,7 +168,12 @@ export default function SettingsScreen() {
 		React.createElement(
 			RN.Text,
 			{ style: styles.note },
-			'a 404 on a model name is handled for you now, the plugin lists what the key can use instead of guessing. every key gets its own turn, so a dead or rate limited one just moves the request along.',
+			'google hands out the free tier per project, not per key. keys made under the same project all share the same 20 requests a day, so make extra keys on another google account.',
+		),
+		React.createElement(
+			RN.Text,
+			{ style: styles.note },
+			'when a model runs out the plugin moves to the next model on that same key, lite and 2.0 included, then to the next key. you only see an error when the whole stack is empty.',
 		),
 		React.createElement(
 			RN.Text,
@@ -159,6 +214,16 @@ const styles = {
 		fontSize: 15,
 	},
 	multiline: { minHeight: 96, textAlignVertical: 'top' },
+	button: {
+		alignSelf: 'flex-start',
+		backgroundColor: '#5865f2',
+		borderRadius: 8,
+		paddingHorizontal: 14,
+		paddingVertical: 9,
+		marginTop: 2,
+		marginBottom: 6,
+	},
+	buttonText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
 	hint: { color: '#7f8489', fontSize: 12, lineHeight: 16 },
 	note: { color: '#7f8489', fontSize: 12, marginTop: 10, lineHeight: 17 },
 } as const

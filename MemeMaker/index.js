@@ -26,8 +26,55 @@ var plugin = (() => {
 
   // src/MemeMaker/gemini.ts
   var Base = "https://generativelanguage.googleapis.com/v1beta/models";
-  var StaticFallbacks = ["gemini-2.5-flash", "gemini-2.0-flash"];
+  var StaticFallbacks = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite"
+  ];
   var modelCache = /* @__PURE__ */ new Map();
+  var dry = /* @__PURE__ */ new Map();
+  function retryAfter(body) {
+    var _a, _b, _c;
+    const fallback = 10 * 60 * 1e3;
+    const ceiling = 6 * 3600 * 1e3;
+    const floor = 5 * 1e3;
+    try {
+      const details = (_c = (_b = (_a = JSON.parse(body)) == null ? void 0 : _a.error) == null ? void 0 : _b.details) != null ? _c : [];
+      for (const detail of details) {
+        const raw = detail == null ? void 0 : detail.retryDelay;
+        if (typeof raw === "string" && /^\d+(\.\d+)?s$/.test(raw)) {
+          return Math.min(Math.max(parseFloat(raw) * 1e3, floor), ceiling);
+        }
+      }
+    } catch {
+    }
+    const match = /retry in ([0-9hms.]+)/i.exec(body);
+    if (match) {
+      let ms = 0;
+      const units = /([\d.]+)([hms])/g;
+      let part;
+      while (part = units.exec(match[1])) {
+        const n = parseFloat(part[1]);
+        if (!Number.isFinite(n)) continue;
+        ms += part[2] === "h" ? n * 36e5 : part[2] === "m" ? n * 6e4 : n * 1e3;
+      }
+      if (ms > 0) return Math.min(Math.max(ms, floor), ceiling);
+    }
+    return fallback;
+  }
+  function noteDry(key, model, body, message) {
+    dry.set(`${key}:${model}`, { until: Date.now() + retryAfter(body), message });
+  }
+  function dryNote(key, model) {
+    const entry = dry.get(`${key}:${model}`);
+    if (!entry) return void 0;
+    if (entry.until <= Date.now()) {
+      dry.delete(`${key}:${model}`);
+      return void 0;
+    }
+    return entry.message;
+  }
   var preferred = 0;
   function parseKeys(raw) {
     return String(raw != null ? raw : "").split(/[\s,]+/).map((key) => key.trim()).filter(Boolean).filter((key, index, all) => all.indexOf(key) === index);
@@ -93,6 +140,9 @@ var plugin = (() => {
   function supportsThinking(model) {
     return /2\.5/i.test(model);
   }
+  function httpError(status, message) {
+    return new Error(`gemini ${status}: ${message}`);
+  }
   async function call(key, model, prompt, opts, thinking) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     const url = `${Base}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
@@ -116,15 +166,20 @@ var plugin = (() => {
         (_c = opts.timeout) != null ? _c : 3e4
       );
     } catch (error) {
-      return { retryKey: true };
+      return { retryKey: true, error: error instanceof Error ? error : new Error("gemini did not answer") };
     }
     const body = await response.text();
     if (!response.ok) {
       const message = pickError(body);
       if (response.status === 400 || response.status === 404) return { retryModel: true };
+      if (response.status === 429) {
+        console.error(`[meme-maker] gemini 429 on ${model}`);
+        noteDry(key, model, body, `gemini 429: ${message}`);
+        return { retryModel: true, quota: true, error: httpError(429, message) };
+      }
       console.error(`[meme-maker] gemini ${response.status}: ${message}`);
-      if (response.status === 429 || response.status === 401 || response.status === 403 || response.status >= 500) {
-        return { retryKey: true, error: new Error(`gemini ${response.status}: ${message}`) };
+      if (response.status === 401 || response.status === 403 || response.status >= 500) {
+        return { retryKey: true, error: httpError(response.status, message) };
       }
       throw new Error(`gemini ${response.status}: ${message}`);
     }
@@ -140,50 +195,50 @@ var plugin = (() => {
     return { text };
   }
   async function generate(prompt, opts) {
-    var _a, _b;
+    var _a, _b, _c, _d;
     const keys = parseKeys(opts.keys.join(" "));
     if (!keys.length) throw new Error("no gemini api key saved yet, open the plugin settings and paste one");
     const timeout = (_a = opts.timeout) != null ? _a : 3e4;
     let lastError;
     let tried = 0;
+    let allQuota = true;
     for (let step = 0; step < keys.length; step++) {
       const index = (preferred + step) % keys.length;
       const key = keys[index];
-      const models = chooseModels(await availableModels(key, timeout), opts.model);
-      let keyFailed = false;
+      const all = chooseModels(await availableModels(key, timeout), opts.model);
       tried++;
+      const models = all.filter((model) => !dryNote(key, model));
+      if (!models.length) {
+        lastError = new Error((_b = dryNote(key, all[0])) != null ? _b : "gemini is out of quota");
+        continue;
+      }
       for (const model of models) {
+        let result;
         try {
-          const result = await call(key, model, prompt, opts, true);
-          if ("text" in result) {
-            preferred = index;
-            return result.text;
-          }
-          if ("retryKey" in result) {
-            if (result.error) lastError = result.error;
-            keyFailed = true;
-            break;
-          }
-          lastError = new Error(`gemini does not have ${model} on this key`);
-          continue;
+          result = await call(key, model, prompt, opts, true);
         } catch (error) {
           lastError = error;
+          allQuota = false;
           try {
-            const second = await call(key, model, prompt, { ...opts, temperature: 0.5 }, true);
-            if ("text" in second) {
-              preferred = index;
-              return second.text;
-            }
+            result = await call(key, model, prompt, { ...opts, temperature: 0.4 }, true);
           } catch (retry) {
             lastError = retry;
+            continue;
           }
-          break;
         }
+        if ("text" in result) {
+          preferred = index;
+          return result.text;
+        }
+        allQuota = allQuota && Boolean(result.quota);
+        lastError = (_c = result.error) != null ? _c : new Error(result.quota ? "gemini is out of quota" : `gemini does not have ${model} on this key`);
+        if ("retryKey" in result) break;
       }
-      if (keyFailed) continue;
     }
-    const detail = (_b = lastError == null ? void 0 : lastError.message) != null ? _b : "no answer";
-    throw new Error(`${detail} (tried ${tried} key${tried === 1 ? "" : "s"})`);
+    const detail = (_d = lastError == null ? void 0 : lastError.message) != null ? _d : "no answer";
+    const count = `${tried} key${tried === 1 ? "" : "s"}`;
+    const hint = allQuota ? "\ngoogle gives the free tier out per project and model, so keys made under the same project share the same 20 a day. make the extra keys on another google account, or turn on billing for that project." : "";
+    throw new Error(`${detail} (tried ${count})${hint}`);
   }
   function shorten(text, max = 1900) {
     const clean = text.trim();
@@ -230,30 +285,62 @@ var plugin = (() => {
 
   // src/MemeMaker/settings.ts
   function SettingsScreen() {
-    var _a, _b;
+    var _a, _b, _c, _d;
     const React = vendetta.metro.common.React;
     const RN = vendetta.metro.common.ReactNative;
     const [state, setState] = React.useState(() => readSettings());
     const [keys, setKeys] = React.useState(String((_a = state.keys) != null ? _a : ""));
     const [model, setModel] = React.useState(String((_b = state.model) != null ? _b : ""));
+    const [savedAt, setSavedAt] = React.useState(0);
+    const keyTimer = React.useRef(null);
+    const modelTimer = React.useRef(null);
+    const latestKeys = React.useRef(String((_c = state.keys) != null ? _c : ""));
+    const latestModel = React.useRef(String((_d = state.model) != null ? _d : ""));
     const toggle = (name) => {
       const next = !state[name];
       writeSettings({ [name]: next });
       setState({ ...state, [name]: next });
     };
-    const saved = parseKeys(keys).length;
+    const cleanKeys = (raw) => raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join("\n");
+    const persistKeys = (raw) => {
+      writeSettings({ keys: cleanKeys(raw) });
+      setSavedAt(Date.now());
+    };
+    const persistModel = (raw) => {
+      writeSettings({ model: raw.trim() });
+      setSavedAt(Date.now());
+    };
+    const onChangeKeys = (text) => {
+      latestKeys.current = text;
+      setKeys(text);
+      if (keyTimer.current) clearTimeout(keyTimer.current);
+      keyTimer.current = setTimeout(() => persistKeys(text), 700);
+    };
+    const onChangeModel = (text) => {
+      latestModel.current = text;
+      setModel(text);
+      if (modelTimer.current) clearTimeout(modelTimer.current);
+      modelTimer.current = setTimeout(() => persistModel(text), 700);
+    };
     const saveKeys = () => {
-      const value = keys.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join("\n");
+      if (keyTimer.current) clearTimeout(keyTimer.current);
+      const value = cleanKeys(latestKeys.current);
+      latestKeys.current = value;
       setKeys(value);
       writeSettings({ keys: value });
       setState({ ...state, keys: value });
+      setSavedAt(Date.now());
     };
     const saveModel = () => {
-      const value = model.trim();
+      if (modelTimer.current) clearTimeout(modelTimer.current);
+      const value = latestModel.current.trim();
+      latestModel.current = value;
       setModel(value);
       writeSettings({ model: value });
       setState({ ...state, model: value });
+      setSavedAt(Date.now());
     };
+    const saved = parseKeys(keys).length;
     const row = (name, label, sub) => React.createElement(
       RN.View,
       { key: name, style: styles.row },
@@ -298,19 +385,25 @@ var plugin = (() => {
         label: "api keys",
         value: keys,
         placeholder: "one key per line",
-        onChange: setKeys,
+        onChange: onChangeKeys,
         onBlur: saveKeys,
         multiline: true,
-        hint: saved ? `${saved} key${saved === 1 ? "" : "s"} saved, used in this order and the next one takes over when one fails` : "paste one or more keys, one per line"
+        hint: saved ? `${saved} key${saved === 1 ? "" : "s"} in the box, saved as you type. each one gets a turn until somebody answers` : "paste one or more keys, one per line"
       }),
+      React.createElement(
+        RN.Pressable,
+        { onPress: saveKeys, style: styles.button },
+        React.createElement(RN.Text, { style: styles.buttonText }, "save keys")
+      ),
       field({
         label: "model",
         value: model,
         placeholder: "gemini-2.5-flash",
-        onChange: setModel,
+        onChange: onChangeModel,
         onBlur: saveModel,
         hint: "blank lets the plugin ask your key which models it has and pick a flash one"
       }),
+      savedAt ? React.createElement(RN.Text, { style: styles.hint }, "saved. go back and run a command, no restart needed.") : null,
       React.createElement(
         RN.Text,
         { style: styles.note },
@@ -319,7 +412,12 @@ var plugin = (() => {
       React.createElement(
         RN.Text,
         { style: styles.note },
-        "a 404 on a model name is handled for you now, the plugin lists what the key can use instead of guessing. every key gets its own turn, so a dead or rate limited one just moves the request along."
+        "google hands out the free tier per project, not per key. keys made under the same project all share the same 20 requests a day, so make extra keys on another google account."
+      ),
+      React.createElement(
+        RN.Text,
+        { style: styles.note },
+        "when a model runs out the plugin moves to the next model on that same key, lite and 2.0 included, then to the next key. you only see an error when the whole stack is empty."
       ),
       React.createElement(
         RN.Text,
@@ -359,6 +457,16 @@ var plugin = (() => {
       fontSize: 15
     },
     multiline: { minHeight: 96, textAlignVertical: "top" },
+    button: {
+      alignSelf: "flex-start",
+      backgroundColor: "#5865f2",
+      borderRadius: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      marginTop: 2,
+      marginBottom: 6
+    },
+    buttonText: { color: "#ffffff", fontSize: 14, fontWeight: "600" },
     hint: { color: "#7f8489", fontSize: 12, lineHeight: 16 },
     note: { color: "#7f8489", fontSize: 12, marginTop: 10, lineHeight: 17 }
   };
