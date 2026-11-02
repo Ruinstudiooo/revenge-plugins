@@ -24,13 +24,63 @@ function fail(where: string, error: any) {
 	toast(`meme maker ${where}: ${text}`.slice(0, 180))
 }
 
+function channelOf(ctx: any): string | undefined {
+	return ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId
+}
+
+/**
+ * revenge normally posts whatever execute returns, but that hook sits behind a
+ * patcher and silently does nothing when it misses. posting here first means the
+ * command works either way, and we only hand the object back if this path fails.
+ */
+function deliver(ctx: any, content: string) {
+	const channelId = channelOf(ctx)
+
+	if (channelId) {
+		const senders = [
+			() => vendetta.metro.findByProps?.('sendMessage', 'receiveMessage')?.sendMessage,
+			() => vendetta.metro.findByProps?.('sendMessage', 'editMessage')?.sendMessage,
+		]
+
+		for (const get of senders) {
+			try {
+				const send = get()
+				if (typeof send !== 'function') continue
+				send(channelId, { content })
+				return undefined
+			} catch (error) {
+				console.error('[meme-maker] sendMessage failed', error)
+			}
+		}
+
+		// last resort, matches what the built in slash commands use
+		try {
+			const bot = vendetta.metro.findByProps?.('sendBotMessage')?.sendBotMessage
+			if (typeof bot === 'function') {
+				bot(channelId, { content })
+				return undefined
+			}
+		} catch (error) {
+			console.error('[meme-maker] sendBotMessage failed', error)
+		}
+	}
+
+	// let revenge do it, this is the path that usually works
+	return { content }
+}
+
 /** a command that throws inside execute takes the whole message with it, so catch here */
-function guarded(run: () => { content: string }) {
+function guarded(ctx: any, run: () => string) {
 	try {
-		return run()
+		return deliver(ctx, run())
 	} catch (error: any) {
 		console.error('[meme-maker] execute failed', error)
-		return { content: `meme maker broke: ${error?.message ?? error}` }
+		const text = `meme maker broke: ${error?.message ?? error}`
+		try {
+			return deliver(ctx, text)
+		} catch {
+			return { content: text }
+		}
 	}
 }
 
@@ -48,10 +98,10 @@ function memeCommand() {
 			{ name: 'top', description: 'top line', type: Str, required: false },
 			{ name: 'bottom', description: 'bottom line', type: Str, required: false },
 		],
-		execute(args: any[]) {
-			return guarded(() => {
+		execute(args: any[], ctx: any) {
+			return guarded(ctx, () => {
 				const opts = readOptions(args)
-				return { content: memeUrl(opts.template ?? '', opts.top ?? '', opts.bottom ?? '') }
+				return memeUrl(opts.template ?? '', opts.top ?? '', opts.bottom ?? '')
 			})
 		},
 	}
@@ -67,18 +117,17 @@ function memeTextCommand() {
 			{ name: 'image', description: 'image url, if not the last one in the channel', type: Str, required: false },
 		],
 		execute(args: any[], ctx: any) {
-			return guarded(() => {
+			return guarded(ctx, () => {
 				const opts = readOptions(args)
 				const text = (opts.text ?? '').trim()
-				if (!text) return { content: 'give me something to write first' }
+				if (!text) return 'give me something to write first'
 
-				const channel = ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId
-				const background = opts.image?.trim() || lastImageUrl(channel)
+				const background = opts.image?.trim() || lastImageUrl(channelOf(ctx))
 				if (!background) {
-					return { content: 'no image in this channel yet. post one, or pass image: with a link.' }
+					return 'no image in this channel yet. post one, or pass image: with a link.'
 				}
 
-				return { content: customUrl(background, opts.top ?? '', text) }
+				return customUrl(background, opts.top ?? '', text)
 			})
 		},
 	}

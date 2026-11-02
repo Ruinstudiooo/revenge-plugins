@@ -268,13 +268,58 @@ var plugin = (() => {
     console.error(`[meme-maker] ${where}`, error);
     toast(`meme maker ${where}: ${text}`.slice(0, 180));
   }
-  function guarded(run) {
+  function channelOf(ctx) {
+    var _a, _b, _c, _d;
+    return (_d = (_b = (_a = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _a.id) != null ? _b : ctx == null ? void 0 : ctx.channelId) != null ? _d : (_c = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _c.channelId;
+  }
+  function deliver(ctx, content) {
+    var _a, _b, _c;
+    const channelId = channelOf(ctx);
+    if (channelId) {
+      const senders = [
+        () => {
+          var _a2, _b2, _c2;
+          return (_c2 = (_b2 = (_a2 = vendetta.metro).findByProps) == null ? void 0 : _b2.call(_a2, "sendMessage", "receiveMessage")) == null ? void 0 : _c2.sendMessage;
+        },
+        () => {
+          var _a2, _b2, _c2;
+          return (_c2 = (_b2 = (_a2 = vendetta.metro).findByProps) == null ? void 0 : _b2.call(_a2, "sendMessage", "editMessage")) == null ? void 0 : _c2.sendMessage;
+        }
+      ];
+      for (const get of senders) {
+        try {
+          const send = get();
+          if (typeof send !== "function") continue;
+          send(channelId, { content });
+          return void 0;
+        } catch (error) {
+          console.error("[meme-maker] sendMessage failed", error);
+        }
+      }
+      try {
+        const bot = (_c = (_b = (_a = vendetta.metro).findByProps) == null ? void 0 : _b.call(_a, "sendBotMessage")) == null ? void 0 : _c.sendBotMessage;
+        if (typeof bot === "function") {
+          bot(channelId, { content });
+          return void 0;
+        }
+      } catch (error) {
+        console.error("[meme-maker] sendBotMessage failed", error);
+      }
+    }
+    return { content };
+  }
+  function guarded(ctx, run) {
     var _a;
     try {
-      return run();
+      return deliver(ctx, run());
     } catch (error) {
       console.error("[meme-maker] execute failed", error);
-      return { content: `meme maker broke: ${(_a = error == null ? void 0 : error.message) != null ? _a : error}` };
+      const text = `meme maker broke: ${(_a = error == null ? void 0 : error.message) != null ? _a : error}`;
+      try {
+        return deliver(ctx, text);
+      } catch {
+        return { content: text };
+      }
     }
   }
   function memeCommand() {
@@ -291,11 +336,11 @@ var plugin = (() => {
         { name: "top", description: "top line", type: Str, required: false },
         { name: "bottom", description: "bottom line", type: Str, required: false }
       ],
-      execute(args) {
-        return guarded(() => {
+      execute(args, ctx) {
+        return guarded(ctx, () => {
           var _a, _b, _c;
           const opts = readOptions(args);
-          return { content: memeUrl((_a = opts.template) != null ? _a : "", (_b = opts.top) != null ? _b : "", (_c = opts.bottom) != null ? _c : "") };
+          return memeUrl((_a = opts.template) != null ? _a : "", (_b = opts.top) != null ? _b : "", (_c = opts.bottom) != null ? _c : "");
         });
       }
     };
@@ -310,17 +355,16 @@ var plugin = (() => {
         { name: "image", description: "image url, if not the last one in the channel", type: Str, required: false }
       ],
       execute(args, ctx) {
-        return guarded(() => {
-          var _a, _b, _c, _d, _e, _f, _g;
+        return guarded(ctx, () => {
+          var _a, _b, _c;
           const opts = readOptions(args);
           const text = ((_a = opts.text) != null ? _a : "").trim();
-          if (!text) return { content: "give me something to write first" };
-          const channel = (_e = (_c = (_b = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _b.id) != null ? _c : ctx == null ? void 0 : ctx.channelId) != null ? _e : (_d = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _d.channelId;
-          const background = ((_f = opts.image) == null ? void 0 : _f.trim()) || lastImageUrl(channel);
+          if (!text) return "give me something to write first";
+          const background = ((_b = opts.image) == null ? void 0 : _b.trim()) || lastImageUrl(channelOf(ctx));
           if (!background) {
-            return { content: "no image in this channel yet. post one, or pass image: with a link." };
+            return "no image in this channel yet. post one, or pass image: with a link.";
           }
-          return { content: customUrl(background, (_g = opts.top) != null ? _g : "", text) };
+          return customUrl(background, (_c = opts.top) != null ? _c : "", text);
         });
       }
     };
