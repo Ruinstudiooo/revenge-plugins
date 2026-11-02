@@ -1,6 +1,8 @@
 import SettingsScreen from './settings'
 import { bindChange, readSettings } from './shared'
 import { customUrl, lastImageUrl, memeUrl, readOptions } from './meme'
+import { randomTemplate } from './templates'
+import { generate, shorten } from './gemini'
 
 // ApplicationCommandOptionType.STRING. the enum is not exported to plugins.
 const Str = 3
@@ -167,18 +169,95 @@ async function deliver(ctx: any, content: string) {
 }
 
 /** a command that throws inside execute takes the whole message with it, so catch here */
-async function guarded(name: string, ctx: any, run: () => string) {
+async function guarded(name: string, ctx: any, run: () => string | Promise<string>) {
 	trace(`meme maker: /${name} ran`)
 	try {
-		return await deliver(ctx, run())
+		return await deliver(ctx, await run())
 	} catch (error: any) {
 		console.error('[meme-maker] execute failed', error)
-		const text = `meme maker broke: ${error?.message ?? error}`
+		const text = `meme maker: ${error?.message ?? error}`
 		try {
 			return await deliver(ctx, text)
 		} catch {
 			return { content: text }
 		}
+	}
+}
+
+/** shared shell for the three gemini commands */
+function aiCommand(config: {
+	name: string
+	description: string
+	option: string
+	optionDescription: string
+	build: (text: string) => string
+	temperature?: number
+}) {
+	return {
+		name: config.name,
+		displayName: config.name,
+		description: config.description,
+		displayDescription: config.description,
+		applicationId: '-1',
+		type: 1,
+		inputType: 1,
+		options: [
+			{
+				name: config.option,
+				displayName: config.option,
+				description: config.optionDescription,
+				displayDescription: config.optionDescription,
+				type: Str,
+				required: true,
+			},
+		],
+		execute(args: any[], ctx: any) {
+			return guarded(config.name, ctx, async () => {
+				const opts = readOptions(args)
+				const text = (opts[config.option] ?? '').trim()
+				if (!text) return `type something after /${config.name}`
+
+				const settings = readSettings()
+				toast('meme maker: asking gemini')
+
+				const answer = await generate(config.build(text), {
+					key: settings.apiKey,
+					model: settings.model,
+					temperature: config.temperature,
+				})
+
+				return shorten(answer)
+			})
+		},
+	}
+}
+
+function randomCommand() {
+	return {
+		name: 'random',
+		displayName: 'random',
+		description: 'post a random meme, with your text if you give any',
+		displayDescription: 'post a random meme, with your text if you give any',
+		applicationId: '-1',
+		type: 1,
+		inputType: 1,
+		options: [
+			{ name: 'top', displayName: 'top', description: 'top line', displayDescription: 'top line', type: Str, required: false },
+			{
+				name: 'bottom',
+				displayName: 'bottom',
+				description: 'bottom line',
+				displayDescription: 'bottom line',
+				type: Str,
+				required: false,
+			},
+		],
+		execute(args: any[], ctx: any) {
+			return guarded('random', ctx, () => {
+				const opts = readOptions(args)
+				return memeUrl(randomTemplate(), opts.top ?? '', opts.bottom ?? '')
+			})
+		},
 	}
 }
 
@@ -264,6 +343,42 @@ function memeTextCommand() {
 	}
 }
 
+function askCommand() {
+	return aiCommand({
+		name: 'ask',
+		description: 'ask gemini anything',
+		option: 'question',
+		optionDescription: 'what you want to know',
+		build: text =>
+			`You are answering a question inside a discord chat. Be direct, useful and as short as the question allows. Do not repeat the question back.\n\n${text}`,
+		temperature: 0.6,
+	})
+}
+
+function rewriteCommand() {
+	return aiCommand({
+		name: 'r',
+		description: 'rewrite your sentence with correct grammar and better words',
+		option: 'text',
+		optionDescription: 'the sentence to fix',
+		build: text =>
+			`Rewrite the text below with correct grammar, natural phrasing and better word choice. Keep the meaning, the tone and the language it is written in. Reply with the rewritten text only, no quotes, no explanation, no notes.\n\n${text}`,
+		temperature: 0.4,
+	})
+}
+
+function shakespeareCommand() {
+	return aiCommand({
+		name: 'shakespeare',
+		description: 'rewrite your sentence like shakespeare',
+		option: 'text',
+		optionDescription: 'the sentence to rewrite',
+		build: text =>
+			`Rewrite the text below in the voice of William Shakespeare: early modern english, thee and thou, inverted phrasing, a little dramatic flourish. Keep the meaning. Reply with the rewritten text only, no quotes, no explanation, no notes.\n\n${text}`,
+		temperature: 0.8,
+	})
+}
+
 function register(command: any) {
 	try {
 		const dispose = vendetta.commands.registerCommand(command)
@@ -306,6 +421,10 @@ function sync() {
 	const wanted: string[] = []
 	if (settings.meme && register(memeCommand())) wanted.push('/meme')
 	if (settings.memetext && register(memeTextCommand())) wanted.push('/memetext')
+	if (settings.random && register(randomCommand())) wanted.push('/random')
+	if (settings.ask && register(askCommand())) wanted.push('/ask')
+	if (settings.rewrite && register(rewriteCommand())) wanted.push('/r')
+	if (settings.shakespeare && register(shakespeareCommand())) wanted.push('/shakespeare')
 
 	// one line on start so its obvious whether the plugin actually loaded
 	if (!announced && wanted.length) {

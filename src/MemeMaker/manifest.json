@@ -1,6 +1,6 @@
 {
 	"name": "Meme Maker",
-	"description": "adds /meme and /memetext to the slash command list",
+	"description": "memes plus /ask, /r and /shakespeare through gemini",
 	"authors": [
 		{
 			"name": "Ji-eun",

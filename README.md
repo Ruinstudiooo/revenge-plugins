@@ -48,7 +48,7 @@ settings page has the master switch, @everyone / @here, the bot filter, and 5m /
 
 ## meme maker
 
-adds two entries to the slash picker.
+adds six entries to the slash picker.
 
 `/meme` takes a template id, a top line and a bottom line. template can be `drake`, `stonks`,
 `this is fine`, or anything else from memegen. leave it blank and it picks a random one from a short
@@ -69,10 +69,36 @@ that picture into a reaction image.
 
 an `image:` option overrides the search if you want a specific url.
 
-both commands return the rendered png url, discord unfurls it into the picture. rendering is done by
-`api.memegen.link`, so no image library ships in the bundle and it needs internet to work.
+`/random` posts a random template, blank or with your two lines.
 
-settings has a switch per command. flipping one off unregisters it from the picker immediately.
+```
+/random
+/random top:me bottom:nobody:
+```
+
+the three text commands go through the gemini api, so they need a key. paste it in the plugin
+settings, it is stored in this plugin's storage on the phone.
+
+| command | what it does |
+| --- | --- |
+| `/ask question:...` | answers the question |
+| `/r text:...` | fixes grammar, wording and flow, keeps the language |
+| `/shakespeare text:...` | same sentence in early modern english |
+
+```
+/r text:he go store yesterday and buyed two bread
+/shakespeare text:i am hungry
+```
+
+the model defaults to `gemini-2.5-flash`. if your key answers with a 404 on that, the plugin walks
+down to `gemini-2.0-flash` and `gemini-1.5-flash` on its own, and you can pin another name in the
+settings.
+
+images are rendered by `api.memegen.link`, so no image library ships in the bundle and the meme
+commands need internet to work.
+
+settings has a switch per command plus the key and model fields. flipping a switch off unregisters
+that command from the picker immediately.
 
 ## build
 
@@ -106,7 +132,7 @@ MemeMaker/
 src/
   GhostPing/         index.ts, settings.ts, shared.ts
   PlatformSpoofer/   index.ts, settings.ts, identify.ts, shared.ts
-  MemeMaker/         index.ts, settings.ts, shared.ts, meme.ts, templates.ts
+  MemeMaker/         index.ts, settings.ts, shared.ts, meme.ts, templates.ts, gemini.ts
 build.mjs
 ```
 

@@ -3,11 +3,29 @@ export interface Settings {
 	meme: boolean
 	/** the /memetext command */
 	memetext: boolean
+	/** the /random command */
+	random: boolean
+	/** the /ask command */
+	ask: boolean
+	/** the /r rewrite command */
+	rewrite: boolean
+	/** the /shakespeare command */
+	shakespeare: boolean
+	/** gemini api key, needed by ask, r and shakespeare */
+	apiKey: string
+	/** gemini model name, blank means the default */
+	model: string
 }
 
 export const DefaultSettings: Settings = {
 	meme: true,
 	memetext: true,
+	random: true,
+	ask: true,
+	rewrite: true,
+	shakespeare: true,
+	apiKey: '',
+	model: 'gemini-2.5-flash',
 }
 
 export function store(): Record<string, any> {

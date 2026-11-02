@@ -27,7 +27,13 @@ var plugin = (() => {
   // src/MemeMaker/shared.ts
   var DefaultSettings = {
     meme: true,
-    memetext: true
+    memetext: true,
+    random: true,
+    ask: true,
+    rewrite: true,
+    shakespeare: true,
+    apiKey: "",
+    model: "gemini-2.5-flash"
   };
   function store() {
     var _a, _b;
@@ -56,44 +62,92 @@ var plugin = (() => {
     const React = vendetta.metro.common.React;
     const RN = vendetta.metro.common.ReactNative;
     const [state, setState] = React.useState(() => readSettings());
-    const update = (patch) => {
-      writeSettings(patch);
-      setState({ ...state, ...patch });
+    const [key, setKey] = React.useState(state.apiKey);
+    const [model, setModel] = React.useState(state.model);
+    const toggle = (name) => {
+      const next = !state[name];
+      writeSettings({ [name]: next });
+      setState({ ...state, [name]: next });
     };
-    const row = (key, label, sub) => React.createElement(
+    const saveKey = () => {
+      const value = key.trim();
+      writeSettings({ apiKey: value });
+      setState({ ...state, apiKey: value });
+    };
+    const saveModel = () => {
+      const value = model.trim() || "gemini-2.5-flash";
+      setModel(value);
+      writeSettings({ model: value });
+      setState({ ...state, model: value });
+    };
+    const row = (name, label, sub) => React.createElement(
       RN.View,
-      { key, style: styles.row },
+      { key: name, style: styles.row },
       React.createElement(
         RN.View,
         { style: styles.texts },
         React.createElement(RN.Text, { style: styles.label }, label),
         React.createElement(RN.Text, { style: styles.sub }, sub)
       ),
-      React.createElement(RN.Switch, {
-        value: Boolean(state[key]),
-        onValueChange: (value) => update({ [key]: value })
+      React.createElement(RN.Switch, { value: Boolean(state[name]), onValueChange: () => toggle(name) })
+    );
+    const field = (label, value, onChange, onBlur, placeholder) => React.createElement(
+      RN.View,
+      { style: styles.field },
+      React.createElement(RN.Text, { style: styles.label }, label),
+      React.createElement(RN.TextInput, {
+        style: styles.input,
+        value,
+        placeholder,
+        placeholderTextColor: "#6b6f76",
+        autoCapitalize: "none",
+        autoCorrect: false,
+        onChangeText: onChange,
+        onBlur,
+        onSubmitEditing: onBlur
       })
     );
     return React.createElement(
       RN.ScrollView,
       { style: styles.screen, contentContainerStyle: styles.content },
+      React.createElement(RN.Text, { style: styles.section }, "commands"),
       row("meme", "/meme", "any template, top and bottom text, or a random one"),
       row("memetext", "/memetext", "writes on the last picture posted in the channel"),
+      row("random", "/random", "posts a random meme"),
+      row("ask", "/ask", "asks gemini a question"),
+      row("rewrite", "/r", "fixes grammar and wording"),
+      row("shakespeare", "/shakespeare", "rewrites your line like shakespeare"),
+      React.createElement(RN.Text, { style: styles.section }, "gemini"),
+      field("api key", key, setKey, saveKey, "paste your key here"),
+      field("model", model, setModel, saveModel, "gemini-2.5-flash"),
       React.createElement(
         RN.Text,
         { style: styles.note },
-        "images are rendered by memegen.link, so both commands need internet. the result arrives as a link, discord turns it into the picture."
+        "free key from aistudio.google.com/apikey. the key is saved in this plugin storage on your phone and only goes to google."
       ),
       React.createElement(
         RN.Text,
         { style: styles.note },
-        "turning one off removes it from the slash picker right away. if it stays visible, close and reopen the picker."
+        "ask, r and shakespeare need the key. if one answers with a 404 the model name is wrong for your key, try gemini-2.0-flash."
+      ),
+      React.createElement(
+        RN.Text,
+        { style: styles.note },
+        "images come from memegen.link, so the meme commands need internet. turning one off removes it from the slash picker right away."
       )
     );
   }
   var styles = {
     screen: { flex: 1 },
-    content: { padding: 16, gap: 4 },
+    content: { padding: 16, gap: 4, paddingBottom: 40 },
+    section: {
+      color: "#7f8489",
+      fontSize: 12,
+      fontWeight: "600",
+      textTransform: "uppercase",
+      marginTop: 16,
+      marginBottom: 4
+    },
     row: {
       flexDirection: "row",
       alignItems: "center",
@@ -104,7 +158,16 @@ var plugin = (() => {
     texts: { flex: 1, gap: 2 },
     label: { color: "#f2f3f5", fontSize: 16, fontWeight: "500" },
     sub: { color: "#a3a6aa", fontSize: 13 },
-    note: { color: "#7f8489", fontSize: 12, marginTop: 12, lineHeight: 17 }
+    field: { gap: 6, paddingVertical: 10 },
+    input: {
+      backgroundColor: "#2b2d31",
+      color: "#f2f3f5",
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 15
+    },
+    note: { color: "#7f8489", fontSize: 12, marginTop: 10, lineHeight: 17 }
   };
 
   // src/MemeMaker/templates.ts
@@ -251,6 +314,74 @@ var plugin = (() => {
     return out;
   }
 
+  // src/MemeMaker/gemini.ts
+  var Base2 = "https://generativelanguage.googleapis.com/v1beta/models";
+  var Fallbacks = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+  function pickError(body) {
+    var _a, _b;
+    try {
+      const data = JSON.parse(body);
+      return (_b = (_a = data == null ? void 0 : data.error) == null ? void 0 : _a.message) != null ? _b : body;
+    } catch {
+      return body;
+    }
+  }
+  function models(wanted) {
+    const list = [(wanted == null ? void 0 : wanted.trim()) || "", ...Fallbacks].filter(Boolean);
+    return list.filter((model, index) => list.indexOf(model) === index);
+  }
+  async function generate(prompt, opts) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    const key = (_a = opts.key) == null ? void 0 : _a.trim();
+    if (!key) throw new Error("no gemini api key saved yet, open the plugin settings and paste one");
+    let lastError;
+    for (const model of models(opts.model)) {
+      const url = `${Base2}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+      let timer;
+      try {
+        const abort = new AbortController();
+        timer = setTimeout(() => abort.abort(), (_b = opts.timeout) != null ? _b : 3e4);
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: (_c = opts.temperature) != null ? _c : 0.7,
+              maxOutputTokens: (_d = opts.maxTokens) != null ? _d : 1024
+            }
+          }),
+          signal: abort.signal
+        });
+        const body = await response.text();
+        if (!response.ok) {
+          lastError = new Error(`gemini ${response.status}: ${pickError(body)}`);
+          if (response.status === 404) continue;
+          throw lastError;
+        }
+        const data = JSON.parse(body);
+        const text = ((_h = (_g = (_f = (_e = data == null ? void 0 : data.candidates) == null ? void 0 : _e[0]) == null ? void 0 : _f.content) == null ? void 0 : _g.parts) != null ? _h : []).map((part) => {
+          var _a2;
+          return (_a2 = part == null ? void 0 : part.text) != null ? _a2 : "";
+        }).join("").trim();
+        if (!text) throw new Error("gemini sent an empty answer back");
+        return text;
+      } catch (error) {
+        lastError = error;
+        if ((error == null ? void 0 : error.name) === "AbortError") {
+          throw new Error("gemini took too long to answer");
+        }
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    throw lastError != null ? lastError : new Error("gemini did not answer");
+  }
+  function shorten(text, max = 1900) {
+    const clean = text.trim();
+    return clean.length > max ? `${clean.slice(0, max - 1)}\u2026` : clean;
+  }
+
   // src/MemeMaker/index.ts
   var Str = 3;
   var disposers = [];
@@ -384,16 +515,82 @@ var plugin = (() => {
     var _a;
     trace(`meme maker: /${name} ran`);
     try {
-      return await deliver(ctx, run());
+      return await deliver(ctx, await run());
     } catch (error) {
       console.error("[meme-maker] execute failed", error);
-      const text = `meme maker broke: ${(_a = error == null ? void 0 : error.message) != null ? _a : error}`;
+      const text = `meme maker: ${(_a = error == null ? void 0 : error.message) != null ? _a : error}`;
       try {
         return await deliver(ctx, text);
       } catch {
         return { content: text };
       }
     }
+  }
+  function aiCommand(config) {
+    return {
+      name: config.name,
+      displayName: config.name,
+      description: config.description,
+      displayDescription: config.description,
+      applicationId: "-1",
+      type: 1,
+      inputType: 1,
+      options: [
+        {
+          name: config.option,
+          displayName: config.option,
+          description: config.optionDescription,
+          displayDescription: config.optionDescription,
+          type: Str,
+          required: true
+        }
+      ],
+      execute(args, ctx) {
+        return guarded(config.name, ctx, async () => {
+          var _a;
+          const opts = readOptions(args);
+          const text = ((_a = opts[config.option]) != null ? _a : "").trim();
+          if (!text) return `type something after /${config.name}`;
+          const settings = readSettings();
+          toast("meme maker: asking gemini");
+          const answer = await generate(config.build(text), {
+            key: settings.apiKey,
+            model: settings.model,
+            temperature: config.temperature
+          });
+          return shorten(answer);
+        });
+      }
+    };
+  }
+  function randomCommand() {
+    return {
+      name: "random",
+      displayName: "random",
+      description: "post a random meme, with your text if you give any",
+      displayDescription: "post a random meme, with your text if you give any",
+      applicationId: "-1",
+      type: 1,
+      inputType: 1,
+      options: [
+        { name: "top", displayName: "top", description: "top line", displayDescription: "top line", type: Str, required: false },
+        {
+          name: "bottom",
+          displayName: "bottom",
+          description: "bottom line",
+          displayDescription: "bottom line",
+          type: Str,
+          required: false
+        }
+      ],
+      execute(args, ctx) {
+        return guarded("random", ctx, () => {
+          var _a, _b;
+          const opts = readOptions(args);
+          return memeUrl(randomTemplate(), (_a = opts.top) != null ? _a : "", (_b = opts.bottom) != null ? _b : "");
+        });
+      }
+    };
   }
   function memeCommand() {
     return {
@@ -475,6 +672,42 @@ var plugin = (() => {
       }
     };
   }
+  function askCommand() {
+    return aiCommand({
+      name: "ask",
+      description: "ask gemini anything",
+      option: "question",
+      optionDescription: "what you want to know",
+      build: (text) => `You are answering a question inside a discord chat. Be direct, useful and as short as the question allows. Do not repeat the question back.
+
+${text}`,
+      temperature: 0.6
+    });
+  }
+  function rewriteCommand() {
+    return aiCommand({
+      name: "r",
+      description: "rewrite your sentence with correct grammar and better words",
+      option: "text",
+      optionDescription: "the sentence to fix",
+      build: (text) => `Rewrite the text below with correct grammar, natural phrasing and better word choice. Keep the meaning, the tone and the language it is written in. Reply with the rewritten text only, no quotes, no explanation, no notes.
+
+${text}`,
+      temperature: 0.4
+    });
+  }
+  function shakespeareCommand() {
+    return aiCommand({
+      name: "shakespeare",
+      description: "rewrite your sentence like shakespeare",
+      option: "text",
+      optionDescription: "the sentence to rewrite",
+      build: (text) => `Rewrite the text below in the voice of William Shakespeare: early modern english, thee and thou, inverted phrasing, a little dramatic flourish. Keep the meaning. Reply with the rewritten text only, no quotes, no explanation, no notes.
+
+${text}`,
+      temperature: 0.8
+    });
+  }
   function register(command) {
     try {
       const dispose = vendetta.commands.registerCommand(command);
@@ -506,6 +739,10 @@ var plugin = (() => {
     const wanted = [];
     if (settings.meme && register(memeCommand())) wanted.push("/meme");
     if (settings.memetext && register(memeTextCommand())) wanted.push("/memetext");
+    if (settings.random && register(randomCommand())) wanted.push("/random");
+    if (settings.ask && register(askCommand())) wanted.push("/ask");
+    if (settings.rewrite && register(rewriteCommand())) wanted.push("/r");
+    if (settings.shakespeare && register(shakespeareCommand())) wanted.push("/shakespeare");
     if (!announced && wanted.length) {
       announced = true;
       trace(`meme maker ready: ${wanted.join(" ")}`);

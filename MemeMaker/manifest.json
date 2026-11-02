@@ -1,6 +1,6 @@
 {
 	"name": "Meme Maker",
-	"description": "adds /meme and /memetext to the slash command list",
+	"description": "memes plus /ask, /r and /shakespeare through gemini",
 	"authors": [
 		{
 			"name": "Ji-eun",
@@ -11,5 +11,5 @@
 	"vendetta": {
 		"icon": "ic_image_24px"
 	},
-	"hash": "85251f93162e3ca105132e2425e1c2741cec6944a544d7833a83fead912a864e"
+	"hash": "b4781949fa3607b7ab0783be157b5d6d6440427517164ca4d80db01a19c5011c"
 }
