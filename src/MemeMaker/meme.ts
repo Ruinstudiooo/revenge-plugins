@@ -37,14 +37,48 @@ export function looksLikeImage(type?: string, url?: string) {
 }
 
 /**
+ * metro moved this store around between discord versions, so try the names in
+ * order instead of trusting one. a miss just means we fall through to the next.
+ */
+function messageStore(): any {
+	const metro = vendetta?.metro
+	if (!metro) return undefined
+
+	const probes = [
+		() => metro.findByStoreName?.('MessageStore'),
+		() => metro.findByName?.('MessageStore'),
+		() => metro.findByProps?.('getMessages', 'getMessage'),
+	]
+
+	for (const probe of probes) {
+		try {
+			const store = probe()
+			if (store?.getMessages) return store
+		} catch {
+			// that lookup is not on this build
+		}
+	}
+
+	return undefined
+}
+
+function toList(messages: any): any[] {
+	if (!messages) return []
+	if (Array.isArray(messages)) return messages
+	if (typeof messages.toArray === 'function') return messages.toArray()
+	if (Array.isArray(messages._array)) return messages._array
+	return []
+}
+
+/**
  * slash commands run client side, so the message store already has everything
  * the channel has loaded. no rest call, no token juggling.
  */
-export function lastImageUrl(channelId: string): string | undefined {
+export function lastImageUrl(channelId?: string): string | undefined {
+	if (!channelId) return undefined
+
 	try {
-		const store = vendetta.metro.findByStoreName('MessageStore')
-		const messages = store?.getMessages?.(channelId)
-		const list = messages?.toArray?.() ?? []
+		const list = toList(messageStore()?.getMessages(channelId))
 
 		for (let i = list.length - 1; i >= 0; i--) {
 			const message = list[i]

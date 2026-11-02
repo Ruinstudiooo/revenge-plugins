@@ -186,20 +186,52 @@ var plugin = (() => {
     if (!url) return false;
     return /\.(png|jpe?g|gif|webp|avif)(\?|#|$)/i.test(url);
   }
+  function messageStore() {
+    const metro = vendetta == null ? void 0 : vendetta.metro;
+    if (!metro) return void 0;
+    const probes = [
+      () => {
+        var _a;
+        return (_a = metro.findByStoreName) == null ? void 0 : _a.call(metro, "MessageStore");
+      },
+      () => {
+        var _a;
+        return (_a = metro.findByName) == null ? void 0 : _a.call(metro, "MessageStore");
+      },
+      () => {
+        var _a;
+        return (_a = metro.findByProps) == null ? void 0 : _a.call(metro, "getMessages", "getMessage");
+      }
+    ];
+    for (const probe of probes) {
+      try {
+        const store2 = probe();
+        if (store2 == null ? void 0 : store2.getMessages) return store2;
+      } catch {
+      }
+    }
+    return void 0;
+  }
+  function toList(messages) {
+    if (!messages) return [];
+    if (Array.isArray(messages)) return messages;
+    if (typeof messages.toArray === "function") return messages.toArray();
+    if (Array.isArray(messages._array)) return messages._array;
+    return [];
+  }
   function lastImageUrl(channelId) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g;
+    if (!channelId) return void 0;
     try {
-      const store2 = vendetta.metro.findByStoreName("MessageStore");
-      const messages = (_a = store2 == null ? void 0 : store2.getMessages) == null ? void 0 : _a.call(store2, channelId);
-      const list = (_c = (_b = messages == null ? void 0 : messages.toArray) == null ? void 0 : _b.call(messages)) != null ? _c : [];
+      const list = toList((_a = messageStore()) == null ? void 0 : _a.getMessages(channelId));
       for (let i = list.length - 1; i >= 0; i--) {
         const message = list[i];
-        for (const file of (_d = message == null ? void 0 : message.attachments) != null ? _d : []) {
-          const url = (_e = file == null ? void 0 : file.url) != null ? _e : file == null ? void 0 : file.proxy_url;
+        for (const file of (_b = message == null ? void 0 : message.attachments) != null ? _b : []) {
+          const url = (_c = file == null ? void 0 : file.url) != null ? _c : file == null ? void 0 : file.proxy_url;
           if (looksLikeImage(file == null ? void 0 : file.content_type, url)) return url;
         }
-        for (const embed of (_f = message == null ? void 0 : message.embeds) != null ? _f : []) {
-          const url = (_i = (_g = embed == null ? void 0 : embed.image) == null ? void 0 : _g.url) != null ? _i : (_h = embed == null ? void 0 : embed.thumbnail) == null ? void 0 : _h.url;
+        for (const embed of (_d = message == null ? void 0 : message.embeds) != null ? _d : []) {
+          const url = (_g = (_e = embed == null ? void 0 : embed.image) == null ? void 0 : _e.url) != null ? _g : (_f = embed == null ? void 0 : embed.thumbnail) == null ? void 0 : _f.url;
           if (url) return url;
         }
       }
@@ -222,6 +254,29 @@ var plugin = (() => {
   // src/MemeMaker/index.ts
   var Str = 3;
   var disposers = [];
+  var announced = false;
+  function toast(message) {
+    try {
+      vendetta.ui.toasts.showToast(message);
+    } catch {
+    }
+    console.log(`[meme-maker] ${message}`);
+  }
+  function fail(where, error) {
+    var _a;
+    const text = (_a = error == null ? void 0 : error.message) != null ? _a : String(error);
+    console.error(`[meme-maker] ${where}`, error);
+    toast(`meme maker ${where}: ${text}`.slice(0, 180));
+  }
+  function guarded(run) {
+    var _a;
+    try {
+      return run();
+    } catch (error) {
+      console.error("[meme-maker] execute failed", error);
+      return { content: `meme maker broke: ${(_a = error == null ? void 0 : error.message) != null ? _a : error}` };
+    }
+  }
   function memeCommand() {
     return {
       name: "meme",
@@ -237,9 +292,11 @@ var plugin = (() => {
         { name: "bottom", description: "bottom line", type: Str, required: false }
       ],
       execute(args) {
-        var _a, _b, _c;
-        const opts = readOptions(args);
-        return { content: memeUrl((_a = opts.template) != null ? _a : "", (_b = opts.top) != null ? _b : "", (_c = opts.bottom) != null ? _c : "") };
+        return guarded(() => {
+          var _a, _b, _c;
+          const opts = readOptions(args);
+          return { content: memeUrl((_a = opts.template) != null ? _a : "", (_b = opts.top) != null ? _b : "", (_c = opts.bottom) != null ? _c : "") };
+        });
       }
     };
   }
@@ -253,17 +310,31 @@ var plugin = (() => {
         { name: "image", description: "image url, if not the last one in the channel", type: Str, required: false }
       ],
       execute(args, ctx) {
-        var _a, _b, _c, _d;
-        const opts = readOptions(args);
-        const text = ((_a = opts.text) != null ? _a : "").trim();
-        if (!text) return { content: "give me something to write first" };
-        const background = ((_b = opts.image) == null ? void 0 : _b.trim()) || lastImageUrl((_c = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _c.id);
-        if (!background) {
-          return { content: "no image in this channel yet. post one, or pass image: with a link." };
-        }
-        return { content: customUrl(background, (_d = opts.top) != null ? _d : "", text) };
+        return guarded(() => {
+          var _a, _b, _c, _d, _e, _f, _g;
+          const opts = readOptions(args);
+          const text = ((_a = opts.text) != null ? _a : "").trim();
+          if (!text) return { content: "give me something to write first" };
+          const channel = (_e = (_c = (_b = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _b.id) != null ? _c : ctx == null ? void 0 : ctx.channelId) != null ? _e : (_d = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _d.channelId;
+          const background = ((_f = opts.image) == null ? void 0 : _f.trim()) || lastImageUrl(channel);
+          if (!background) {
+            return { content: "no image in this channel yet. post one, or pass image: with a link." };
+          }
+          return { content: customUrl(background, (_g = opts.top) != null ? _g : "", text) };
+        });
       }
     };
+  }
+  function register(command) {
+    try {
+      const dispose = vendetta.commands.registerCommand(command);
+      disposers.push(typeof dispose === "function" ? dispose : () => {
+      });
+      return true;
+    } catch (error) {
+      fail(`could not add /${command.name}`, error);
+      return false;
+    }
   }
   function sync() {
     var _a;
@@ -275,17 +346,26 @@ var plugin = (() => {
     }
     disposers = [];
     const settings = readSettings();
-    if (!((_a = vendetta == null ? void 0 : vendetta.commands) == null ? void 0 : _a.registerCommand)) {
-      console.log("[meme-maker] no commands api on this build");
+    if (typeof ((_a = vendetta == null ? void 0 : vendetta.commands) == null ? void 0 : _a.registerCommand) !== "function") {
+      toast("meme maker: this revenge build has no slash command api");
       return;
     }
-    if (settings.meme) disposers.push(vendetta.commands.registerCommand(memeCommand()));
-    if (settings.memetext) disposers.push(vendetta.commands.registerCommand(memeTextCommand()));
+    const wanted = [];
+    if (settings.meme && register(memeCommand())) wanted.push("/meme");
+    if (settings.memetext && register(memeTextCommand())) wanted.push("/memetext");
+    if (!announced && wanted.length) {
+      announced = true;
+      toast(`meme maker ready: ${wanted.join(" ")}`);
+    }
   }
   var index_default = {
     onLoad() {
-      bindChange(sync);
-      sync();
+      try {
+        bindChange(sync);
+        sync();
+      } catch (error) {
+        fail("failed to load", error);
+      }
     },
     onUnload() {
       for (const dispose of disposers) {
