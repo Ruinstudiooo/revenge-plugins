@@ -24,13 +24,16 @@ function fail(where: string, error: any) {
 	toast(`meme maker ${where}: ${text}`.slice(0, 180))
 }
 
-function channelOf(ctx: any): string | undefined {
+function selectedChannel(): string | undefined {
 	try {
-		const picked = vendetta.metro.findByProps?.('getChannelId', 'getLastSelectedChannelId')?.getChannelId?.()
-		return ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId ?? picked ?? undefined
+		return vendetta.metro.findByProps?.('getChannelId', 'getLastSelectedChannelId')?.getChannelId?.() ?? undefined
 	} catch {
-		return ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId
+		return undefined
 	}
+}
+
+function channelOf(ctx: any): string | undefined {
+	return selectedChannel() ?? ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId
 }
 
 // flipped on while the command is not posting on someone's build. it makes each
@@ -41,9 +44,63 @@ function trace(message: string) {
 	if (DEBUG) toast(message)
 }
 
+function sleep(ms: number) {
+	return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * the send calls resolve whether or not anything reaches the channel, so the
+ * only honest check is looking for the message afterwards. undefined means
+ * there is nothing to look at and the call is all we have to go on.
+ */
+async function landed(channelId: string, content: string): Promise<boolean | undefined> {
+	try {
+		const store = vendetta.metro.findByProps?.('getMessage', 'getMessages')
+		if (!store?.getMessages) return undefined
+
+		const raw = store.getMessages(channelId)
+		if (!raw) return undefined
+
+		const list = Array.isArray(raw) ? raw : (raw.toArray?.() ?? raw._array)
+		if (!Array.isArray(list)) return undefined
+
+		for (let i = list.length - 1; i >= 0 && i >= list.length - 8; i--) {
+			if (list[i]?.content === content) return true
+		}
+
+		return false
+	} catch {
+		return undefined
+	}
+}
+
+function channelLoaded(channelId: string): boolean | undefined {
+	try {
+		const store =
+			vendetta.metro.findByProps?.('getChannel', 'getDMFromUserId') ??
+			vendetta.metro.findByProps?.('getChannel')
+		if (!store?.getChannel) return undefined
+		return Boolean(store.getChannel(channelId))
+	} catch {
+		return undefined
+	}
+}
+
+function copyToClipboard(text: string) {
+	try {
+		const clipboard =
+			vendetta.metro.common?.clipboard ??
+			vendetta.metro.findByProps?.('setString', 'getString', 'hasString')
+		clipboard?.setString?.(text)
+		return true
+	} catch {
+		return false
+	}
+}
+
 /**
  * discord rejects a half filled message quietly, so send the same shape a real
- * send uses and wait for it before claiming anything went out.
+ * send uses, wait, then look for the message before claiming anything went out.
  */
 async function deliver(ctx: any, content: string) {
 	const channelId = channelOf(ctx)
@@ -52,6 +109,9 @@ async function deliver(ctx: any, content: string) {
 		trace('meme maker: no channel in the command context')
 		return { content }
 	}
+
+	const known = channelLoaded(channelId)
+	trace(`meme maker: channel ${known === undefined ? 'unknown' : known ? 'ok' : 'not loaded'}`)
 
 	const payload = { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] }
 
@@ -64,9 +124,15 @@ async function deliver(ctx: any, content: string) {
 		try {
 			const send = get()
 			if (typeof send !== 'function') continue
+
 			await send(channelId, payload)
-			trace('meme maker: posted')
-			return undefined
+			await sleep(400)
+
+			if ((await landed(channelId, content)) !== false) {
+				trace('meme maker: posted')
+				return undefined
+			}
+			console.error('[meme-maker] sendMessage resolved but nothing landed')
 		} catch (error) {
 			console.error('[meme-maker] sendMessage failed', error)
 		}
@@ -77,16 +143,26 @@ async function deliver(ctx: any, content: string) {
 		const bot = vendetta.metro.findByProps?.('sendBotMessage')?.sendBotMessage
 		if (typeof bot === 'function') {
 			await bot(channelId, payload)
-			trace('meme maker: posted as bot message')
-			return undefined
+			await sleep(400)
+
+			if ((await landed(channelId, content)) !== false) {
+				trace('meme maker: posted as bot message')
+				return undefined
+			}
+			console.error('[meme-maker] sendBotMessage resolved but nothing landed')
 		}
 	} catch (error) {
 		console.error('[meme-maker] sendBotMessage failed', error)
 	}
 
-	trace('meme maker: could not post, handing the link back to revenge')
+	// nothing reached the channel, at least hand over the link
+	if (copyToClipboard(content)) {
+		trace('meme maker: nothing landed, link copied instead')
+	} else {
+		trace('meme maker: could not post or copy')
+	}
 
-	// let revenge do it, this is the path that usually works
+	// let revenge try too
 	return { content }
 }
 

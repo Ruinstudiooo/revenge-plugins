@@ -268,18 +268,61 @@ var plugin = (() => {
     console.error(`[meme-maker] ${where}`, error);
     toast(`meme maker ${where}: ${text}`.slice(0, 180));
   }
-  function channelOf(ctx) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+  function selectedChannel() {
+    var _a, _b, _c, _d, _e;
     try {
-      const picked = (_d = (_c = (_b = (_a = vendetta.metro).findByProps) == null ? void 0 : _b.call(_a, "getChannelId", "getLastSelectedChannelId")) == null ? void 0 : _c.getChannelId) == null ? void 0 : _d.call(_c);
-      return (_j = (_i = (_h = (_f = (_e = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _e.id) != null ? _f : ctx == null ? void 0 : ctx.channelId) != null ? _h : (_g = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _g.channelId) != null ? _i : picked) != null ? _j : void 0;
+      return (_e = (_d = (_c = (_b = (_a = vendetta.metro).findByProps) == null ? void 0 : _b.call(_a, "getChannelId", "getLastSelectedChannelId")) == null ? void 0 : _c.getChannelId) == null ? void 0 : _d.call(_c)) != null ? _e : void 0;
     } catch {
-      return (_n = (_l = (_k = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _k.id) != null ? _l : ctx == null ? void 0 : ctx.channelId) != null ? _n : (_m = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _m.channelId;
+      return void 0;
     }
+  }
+  function channelOf(ctx) {
+    var _a, _b, _c, _d, _e;
+    return (_e = (_c = (_b = selectedChannel()) != null ? _b : (_a = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _a.id) != null ? _c : ctx == null ? void 0 : ctx.channelId) != null ? _e : (_d = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _d.channelId;
   }
   var DEBUG = true;
   function trace(message) {
     if (DEBUG) toast(message);
+  }
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  async function landed(channelId, content) {
+    var _a, _b, _c, _d, _e;
+    try {
+      const store2 = (_b = (_a = vendetta.metro).findByProps) == null ? void 0 : _b.call(_a, "getMessage", "getMessages");
+      if (!(store2 == null ? void 0 : store2.getMessages)) return void 0;
+      const raw = store2.getMessages(channelId);
+      if (!raw) return void 0;
+      const list = Array.isArray(raw) ? raw : (_d = (_c = raw.toArray) == null ? void 0 : _c.call(raw)) != null ? _d : raw._array;
+      if (!Array.isArray(list)) return void 0;
+      for (let i = list.length - 1; i >= 0 && i >= list.length - 8; i--) {
+        if (((_e = list[i]) == null ? void 0 : _e.content) === content) return true;
+      }
+      return false;
+    } catch {
+      return void 0;
+    }
+  }
+  function channelLoaded(channelId) {
+    var _a, _b, _c, _d, _e;
+    try {
+      const store2 = (_e = (_b = (_a = vendetta.metro).findByProps) == null ? void 0 : _b.call(_a, "getChannel", "getDMFromUserId")) != null ? _e : (_d = (_c = vendetta.metro).findByProps) == null ? void 0 : _d.call(_c, "getChannel");
+      if (!(store2 == null ? void 0 : store2.getChannel)) return void 0;
+      return Boolean(store2.getChannel(channelId));
+    } catch {
+      return void 0;
+    }
+  }
+  function copyToClipboard(text) {
+    var _a, _b, _c, _d, _e;
+    try {
+      const clipboard = (_d = (_a = vendetta.metro.common) == null ? void 0 : _a.clipboard) != null ? _d : (_c = (_b = vendetta.metro).findByProps) == null ? void 0 : _c.call(_b, "setString", "getString", "hasString");
+      (_e = clipboard == null ? void 0 : clipboard.setString) == null ? void 0 : _e.call(clipboard, text);
+      return true;
+    } catch {
+      return false;
+    }
   }
   async function deliver(ctx, content) {
     var _a, _b, _c;
@@ -288,6 +331,8 @@ var plugin = (() => {
       trace("meme maker: no channel in the command context");
       return { content };
     }
+    const known = channelLoaded(channelId);
+    trace(`meme maker: channel ${known === void 0 ? "unknown" : known ? "ok" : "not loaded"}`);
     const payload = { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] };
     const senders = [
       () => {
@@ -304,8 +349,12 @@ var plugin = (() => {
         const send = get();
         if (typeof send !== "function") continue;
         await send(channelId, payload);
-        trace("meme maker: posted");
-        return void 0;
+        await sleep(400);
+        if (await landed(channelId, content) !== false) {
+          trace("meme maker: posted");
+          return void 0;
+        }
+        console.error("[meme-maker] sendMessage resolved but nothing landed");
       } catch (error) {
         console.error("[meme-maker] sendMessage failed", error);
       }
@@ -314,13 +363,21 @@ var plugin = (() => {
       const bot = (_c = (_b = (_a = vendetta.metro).findByProps) == null ? void 0 : _b.call(_a, "sendBotMessage")) == null ? void 0 : _c.sendBotMessage;
       if (typeof bot === "function") {
         await bot(channelId, payload);
-        trace("meme maker: posted as bot message");
-        return void 0;
+        await sleep(400);
+        if (await landed(channelId, content) !== false) {
+          trace("meme maker: posted as bot message");
+          return void 0;
+        }
+        console.error("[meme-maker] sendBotMessage resolved but nothing landed");
       }
     } catch (error) {
       console.error("[meme-maker] sendBotMessage failed", error);
     }
-    trace("meme maker: could not post, handing the link back to revenge");
+    if (copyToClipboard(content)) {
+      trace("meme maker: nothing landed, link copied instead");
+    } else {
+      trace("meme maker: could not post or copy");
+    }
     return { content };
   }
   async function guarded(name, ctx, run) {
