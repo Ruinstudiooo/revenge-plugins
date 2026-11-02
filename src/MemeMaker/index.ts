@@ -187,9 +187,9 @@ function register(command: any) {
 		const dispose = vendetta.commands.registerCommand(command)
 		disposers.push(typeof dispose === 'function' ? dispose : () => {})
 
-		// revenge works out the id itself, a non numeric one means discord can
-		// list the command but never resolve it when you press send
-		if (!/^\d+$/.test(String(command.id))) {
+		// discord numbers its built in commands downwards from -1, so -60 is a
+		// normal id. only NaN means revenge could not work a number out at all
+		if (Number.isNaN(Number(command.id))) {
 			trace(`meme maker: /${command.name} got a bad id (${command.id})`)
 		}
 

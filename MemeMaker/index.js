@@ -417,7 +417,7 @@ var plugin = (() => {
       const dispose = vendetta.commands.registerCommand(command);
       disposers.push(typeof dispose === "function" ? dispose : () => {
       });
-      if (!/^\d+$/.test(String(command.id))) {
+      if (Number.isNaN(Number(command.id))) {
         trace(`meme maker: /${command.name} got a bad id (${command.id})`);
       }
       return true;
