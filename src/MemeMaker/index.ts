@@ -25,7 +25,12 @@ function fail(where: string, error: any) {
 }
 
 function channelOf(ctx: any): string | undefined {
-	return ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId
+	try {
+		const picked = vendetta.metro.findByProps?.('getChannelId', 'getLastSelectedChannelId')?.getChannelId?.()
+		return ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId ?? picked ?? undefined
+	} catch {
+		return ctx?.channel?.id ?? ctx?.channelId ?? ctx?.channel?.channelId
+	}
 }
 
 // flipped on while the command is not posting on someone's build. it makes each
@@ -37,11 +42,10 @@ function trace(message: string) {
 }
 
 /**
- * revenge normally posts whatever execute returns, but that hook sits behind a
- * patcher and silently does nothing when it misses. posting here first means the
- * command works either way, and we only hand the object back if this path fails.
+ * discord rejects a half filled message quietly, so send the same shape a real
+ * send uses and wait for it before claiming anything went out.
  */
-function deliver(ctx: any, content: string) {
+async function deliver(ctx: any, content: string) {
 	const channelId = channelOf(ctx)
 
 	if (!channelId) {
@@ -49,16 +53,18 @@ function deliver(ctx: any, content: string) {
 		return { content }
 	}
 
+	const payload = { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] }
+
 	const senders = [
-		() => vendetta.metro.findByProps?.('sendMessage', 'receiveMessage')?.sendMessage,
 		() => vendetta.metro.findByProps?.('sendMessage', 'editMessage')?.sendMessage,
+		() => vendetta.metro.findByProps?.('sendMessage', 'receiveMessage')?.sendMessage,
 	]
 
 	for (const get of senders) {
 		try {
 			const send = get()
 			if (typeof send !== 'function') continue
-			send(channelId, { content })
+			await send(channelId, payload)
 			trace('meme maker: posted')
 			return undefined
 		} catch (error) {
@@ -70,7 +76,7 @@ function deliver(ctx: any, content: string) {
 	try {
 		const bot = vendetta.metro.findByProps?.('sendBotMessage')?.sendBotMessage
 		if (typeof bot === 'function') {
-			bot(channelId, { content })
+			await bot(channelId, payload)
 			trace('meme maker: posted as bot message')
 			return undefined
 		}
@@ -85,15 +91,15 @@ function deliver(ctx: any, content: string) {
 }
 
 /** a command that throws inside execute takes the whole message with it, so catch here */
-function guarded(name: string, ctx: any, run: () => string) {
+async function guarded(name: string, ctx: any, run: () => string) {
 	trace(`meme maker: /${name} ran`)
 	try {
-		return deliver(ctx, run())
+		return await deliver(ctx, run())
 	} catch (error: any) {
 		console.error('[meme-maker] execute failed', error)
 		const text = `meme maker broke: ${error?.message ?? error}`
 		try {
-			return deliver(ctx, text)
+			return await deliver(ctx, text)
 		} catch {
 			return { content: text }
 		}

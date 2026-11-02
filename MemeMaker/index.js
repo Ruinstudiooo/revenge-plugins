@@ -269,35 +269,41 @@ var plugin = (() => {
     toast(`meme maker ${where}: ${text}`.slice(0, 180));
   }
   function channelOf(ctx) {
-    var _a, _b, _c, _d;
-    return (_d = (_b = (_a = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _a.id) != null ? _b : ctx == null ? void 0 : ctx.channelId) != null ? _d : (_c = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _c.channelId;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    try {
+      const picked = (_d = (_c = (_b = (_a = vendetta.metro).findByProps) == null ? void 0 : _b.call(_a, "getChannelId", "getLastSelectedChannelId")) == null ? void 0 : _c.getChannelId) == null ? void 0 : _d.call(_c);
+      return (_j = (_i = (_h = (_f = (_e = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _e.id) != null ? _f : ctx == null ? void 0 : ctx.channelId) != null ? _h : (_g = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _g.channelId) != null ? _i : picked) != null ? _j : void 0;
+    } catch {
+      return (_n = (_l = (_k = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _k.id) != null ? _l : ctx == null ? void 0 : ctx.channelId) != null ? _n : (_m = ctx == null ? void 0 : ctx.channel) == null ? void 0 : _m.channelId;
+    }
   }
   var DEBUG = true;
   function trace(message) {
     if (DEBUG) toast(message);
   }
-  function deliver(ctx, content) {
+  async function deliver(ctx, content) {
     var _a, _b, _c;
     const channelId = channelOf(ctx);
     if (!channelId) {
       trace("meme maker: no channel in the command context");
       return { content };
     }
+    const payload = { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] };
     const senders = [
       () => {
         var _a2, _b2, _c2;
-        return (_c2 = (_b2 = (_a2 = vendetta.metro).findByProps) == null ? void 0 : _b2.call(_a2, "sendMessage", "receiveMessage")) == null ? void 0 : _c2.sendMessage;
+        return (_c2 = (_b2 = (_a2 = vendetta.metro).findByProps) == null ? void 0 : _b2.call(_a2, "sendMessage", "editMessage")) == null ? void 0 : _c2.sendMessage;
       },
       () => {
         var _a2, _b2, _c2;
-        return (_c2 = (_b2 = (_a2 = vendetta.metro).findByProps) == null ? void 0 : _b2.call(_a2, "sendMessage", "editMessage")) == null ? void 0 : _c2.sendMessage;
+        return (_c2 = (_b2 = (_a2 = vendetta.metro).findByProps) == null ? void 0 : _b2.call(_a2, "sendMessage", "receiveMessage")) == null ? void 0 : _c2.sendMessage;
       }
     ];
     for (const get of senders) {
       try {
         const send = get();
         if (typeof send !== "function") continue;
-        send(channelId, { content });
+        await send(channelId, payload);
         trace("meme maker: posted");
         return void 0;
       } catch (error) {
@@ -307,7 +313,7 @@ var plugin = (() => {
     try {
       const bot = (_c = (_b = (_a = vendetta.metro).findByProps) == null ? void 0 : _b.call(_a, "sendBotMessage")) == null ? void 0 : _c.sendBotMessage;
       if (typeof bot === "function") {
-        bot(channelId, { content });
+        await bot(channelId, payload);
         trace("meme maker: posted as bot message");
         return void 0;
       }
@@ -317,16 +323,16 @@ var plugin = (() => {
     trace("meme maker: could not post, handing the link back to revenge");
     return { content };
   }
-  function guarded(name, ctx, run) {
+  async function guarded(name, ctx, run) {
     var _a;
     trace(`meme maker: /${name} ran`);
     try {
-      return deliver(ctx, run());
+      return await deliver(ctx, run());
     } catch (error) {
       console.error("[meme-maker] execute failed", error);
       const text = `meme maker broke: ${(_a = error == null ? void 0 : error.message) != null ? _a : error}`;
       try {
-        return deliver(ctx, text);
+        return await deliver(ctx, text);
       } catch {
         return { content: text };
       }
