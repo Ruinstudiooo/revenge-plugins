@@ -6,6 +6,7 @@ from its url, no repository list needed.
 ```
 https://ruinstudiooo.github.io/revenge-plugins/GhostPing/
 https://ruinstudiooo.github.io/revenge-plugins/PlatformSpoofer/
+https://ruinstudiooo.github.io/revenge-plugins/MemeMaker/
 ```
 
 paste that in revenge, settings > plugins, where it asks for a source. revenge pulls
@@ -45,6 +46,34 @@ what it said.
 
 settings page has the master switch, @everyone / @here, the bot filter, and 5m / 15m / 1h / any.
 
+## meme maker
+
+adds two entries to the slash picker.
+
+`/meme` takes a template id, a top line and a bottom line. template can be `drake`, `stonks`,
+`this is fine`, or anything else from memegen. leave it blank and it picks a random one from a short
+built-in list.
+
+```
+/meme template:drake top:hello there bottom:general kenobi
+```
+
+`/memetext` writes on the last picture posted in the channel. it scans the message store, newest
+first, and takes the first image attachment or embed image it finds. `/memetext text:nobody:` turns
+that picture into a reaction image.
+
+```
+/memetext text:when the plugin works
+/memetext top:me: text:nobody:
+```
+
+an `image:` option overrides the search if you want a specific url.
+
+both commands return the rendered png url, discord unfurls it into the picture. rendering is done by
+`api.memegen.link`, so no image library ships in the bundle and it needs internet to work.
+
+settings has a switch per command. flipping one off unregisters it from the picker immediately.
+
 ## build
 
 ```sh
@@ -71,9 +100,13 @@ GhostPing/
 PlatformSpoofer/
   manifest.json
   index.js
+MemeMaker/
+  manifest.json
+  index.js
 src/
   GhostPing/         index.ts, settings.ts, shared.ts
   PlatformSpoofer/   index.ts, settings.ts, identify.ts, shared.ts
+  MemeMaker/         index.ts, settings.ts, shared.ts, meme.ts, templates.ts
 build.mjs
 ```
 

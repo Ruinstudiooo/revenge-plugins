@@ -1,0 +1,14 @@
+{
+	"name": "Meme Maker",
+	"description": "adds /meme and /memetext to the slash command list",
+	"authors": [
+		{
+			"name": "Ji-eun",
+			"id": "1471868110553223371"
+		}
+	],
+	"main": "index.js",
+	"vendetta": {
+		"icon": "ic_image_24px"
+	}
+}
