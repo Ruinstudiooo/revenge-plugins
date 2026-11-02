@@ -24,6 +24,172 @@ var plugin = (() => {
     default: () => index_default
   });
 
+  // src/MemeMaker/gemini.ts
+  var Base = "https://generativelanguage.googleapis.com/v1beta/models";
+  var StaticFallbacks = ["gemini-2.5-flash", "gemini-2.0-flash"];
+  var modelCache = /* @__PURE__ */ new Map();
+  var preferred = 0;
+  function parseKeys(raw) {
+    return String(raw != null ? raw : "").split(/[\s,]+/).map((key) => key.trim()).filter(Boolean).filter((key, index, all) => all.indexOf(key) === index);
+  }
+  function shortName(name) {
+    return String(name != null ? name : "").replace(/^models\//, "");
+  }
+  function pickError(body) {
+    var _a, _b, _c;
+    try {
+      return (_c = (_b = (_a = JSON.parse(body)) == null ? void 0 : _a.error) == null ? void 0 : _b.message) != null ? _c : body;
+    } catch {
+      return body;
+    }
+  }
+  async function request(url, init, timeout) {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), timeout);
+    try {
+      return await fetch(url, { ...init, signal: abort.signal });
+    } catch (error) {
+      if ((error == null ? void 0 : error.name) === "AbortError") throw new Error("gemini took too long to answer");
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async function availableModels(key, timeout) {
+    var _a;
+    const cached = modelCache.get(key);
+    if (cached == null ? void 0 : cached.length) return cached;
+    try {
+      const response = await request(`${Base}?key=${encodeURIComponent(key)}&pageSize=1000`, { method: "GET" }, timeout);
+      if (!response.ok) return void 0;
+      const data = JSON.parse(await response.text());
+      const list = ((_a = data == null ? void 0 : data.models) != null ? _a : []).filter((model) => {
+        var _a2, _b;
+        const methods = (_b = (_a2 = model == null ? void 0 : model.supportedGenerationMethods) != null ? _a2 : model == null ? void 0 : model.supportedActions) != null ? _b : [];
+        return Array.isArray(methods) && methods.includes("generateContent");
+      }).map((model) => shortName(model == null ? void 0 : model.name)).filter(Boolean);
+      if (!list.length) return void 0;
+      modelCache.set(key, list);
+      return list;
+    } catch {
+      return void 0;
+    }
+  }
+  function chooseModels(available, wanted) {
+    const name = (wanted != null ? wanted : "").trim();
+    const list = (available == null ? void 0 : available.length) ? available : StaticFallbacks;
+    const out = [];
+    const push = (model) => {
+      if (model && !out.includes(model)) out.push(model);
+    };
+    if (name && list.includes(name)) push(name);
+    for (const model of list) {
+      if (/flash/i.test(model) && !/thinking|exp|preview|learnlm/i.test(model)) push(model);
+    }
+    if (name && !out.includes(name)) push(name);
+    for (const model of list) push(model);
+    return out.length ? out : [name || StaticFallbacks[0]];
+  }
+  function supportsThinking(model) {
+    return /2\.5/i.test(model);
+  }
+  async function call(key, model, prompt, opts, thinking) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    const url = `${Base}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+    const generationConfig = {
+      temperature: (_a = opts.temperature) != null ? _a : 0.7,
+      maxOutputTokens: (_b = opts.maxTokens) != null ? _b : 1024
+    };
+    if (thinking && supportsThinking(model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    let response;
+    try {
+      response = await request(
+        url,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig
+          })
+        },
+        (_c = opts.timeout) != null ? _c : 3e4
+      );
+    } catch (error) {
+      return { retryKey: true };
+    }
+    const body = await response.text();
+    if (!response.ok) {
+      const message = pickError(body);
+      if (response.status === 400 || response.status === 404) return { retryModel: true };
+      console.error(`[meme-maker] gemini ${response.status}: ${message}`);
+      if (response.status === 429 || response.status === 401 || response.status === 403 || response.status >= 500) {
+        return { retryKey: true, error: new Error(`gemini ${response.status}: ${message}`) };
+      }
+      throw new Error(`gemini ${response.status}: ${message}`);
+    }
+    const data = JSON.parse(body);
+    const text = ((_g = (_f = (_e = (_d = data == null ? void 0 : data.candidates) == null ? void 0 : _d[0]) == null ? void 0 : _e.content) == null ? void 0 : _f.parts) != null ? _g : []).map((part) => {
+      var _a2;
+      return (_a2 = part == null ? void 0 : part.text) != null ? _a2 : "";
+    }).join("").trim();
+    if (!text) {
+      const blocked = (_k = (_h = data == null ? void 0 : data.promptFeedback) == null ? void 0 : _h.blockReason) != null ? _k : (_j = (_i = data == null ? void 0 : data.candidates) == null ? void 0 : _i[0]) == null ? void 0 : _j.finishReason;
+      throw new Error(blocked ? `gemini refused (${blocked})` : "gemini sent an empty answer back");
+    }
+    return { text };
+  }
+  async function generate(prompt, opts) {
+    var _a, _b;
+    const keys = parseKeys(opts.keys.join(" "));
+    if (!keys.length) throw new Error("no gemini api key saved yet, open the plugin settings and paste one");
+    const timeout = (_a = opts.timeout) != null ? _a : 3e4;
+    let lastError;
+    let tried = 0;
+    for (let step = 0; step < keys.length; step++) {
+      const index = (preferred + step) % keys.length;
+      const key = keys[index];
+      const models = chooseModels(await availableModels(key, timeout), opts.model);
+      let keyFailed = false;
+      tried++;
+      for (const model of models) {
+        try {
+          const result = await call(key, model, prompt, opts, true);
+          if ("text" in result) {
+            preferred = index;
+            return result.text;
+          }
+          if ("retryKey" in result) {
+            if (result.error) lastError = result.error;
+            keyFailed = true;
+            break;
+          }
+          lastError = new Error(`gemini does not have ${model} on this key`);
+          continue;
+        } catch (error) {
+          lastError = error;
+          try {
+            const second = await call(key, model, prompt, { ...opts, temperature: 0.5 }, true);
+            if ("text" in second) {
+              preferred = index;
+              return second.text;
+            }
+          } catch (retry) {
+            lastError = retry;
+          }
+          break;
+        }
+      }
+      if (keyFailed) continue;
+    }
+    const detail = (_b = lastError == null ? void 0 : lastError.message) != null ? _b : "no answer";
+    throw new Error(`${detail} (tried ${tried} key${tried === 1 ? "" : "s"})`);
+  }
+  function shorten(text, max = 1900) {
+    const clean = text.trim();
+    return clean.length > max ? `${clean.slice(0, max - 1)}\u2026` : clean;
+  }
+
   // src/MemeMaker/shared.ts
   var DefaultSettings = {
     meme: true,
@@ -32,7 +198,7 @@ var plugin = (() => {
     ask: true,
     rewrite: true,
     shakespeare: true,
-    apiKey: "",
+    keys: "",
     model: "gemini-2.5-flash"
   };
   function store() {
@@ -41,6 +207,11 @@ var plugin = (() => {
   }
   function readSettings() {
     return { ...DefaultSettings, ...store() };
+  }
+  function readKeys() {
+    var _a, _b;
+    const saved = store();
+    return parseKeys((_b = (_a = saved.keys) != null ? _a : saved.apiKey) != null ? _b : "");
   }
   function writeSettings(patch) {
     Object.assign(store(), patch);
@@ -59,23 +230,26 @@ var plugin = (() => {
 
   // src/MemeMaker/settings.ts
   function SettingsScreen() {
+    var _a, _b;
     const React = vendetta.metro.common.React;
     const RN = vendetta.metro.common.ReactNative;
     const [state, setState] = React.useState(() => readSettings());
-    const [key, setKey] = React.useState(state.apiKey);
-    const [model, setModel] = React.useState(state.model);
+    const [keys, setKeys] = React.useState(String((_a = state.keys) != null ? _a : ""));
+    const [model, setModel] = React.useState(String((_b = state.model) != null ? _b : ""));
     const toggle = (name) => {
       const next = !state[name];
       writeSettings({ [name]: next });
       setState({ ...state, [name]: next });
     };
-    const saveKey = () => {
-      const value = key.trim();
-      writeSettings({ apiKey: value });
-      setState({ ...state, apiKey: value });
+    const saved = parseKeys(keys).length;
+    const saveKeys = () => {
+      const value = keys.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join("\n");
+      setKeys(value);
+      writeSettings({ keys: value });
+      setState({ ...state, keys: value });
     };
     const saveModel = () => {
-      const value = model.trim() || "gemini-2.5-flash";
+      const value = model.trim();
       setModel(value);
       writeSettings({ model: value });
       setState({ ...state, model: value });
@@ -91,21 +265,23 @@ var plugin = (() => {
       ),
       React.createElement(RN.Switch, { value: Boolean(state[name]), onValueChange: () => toggle(name) })
     );
-    const field = (label, value, onChange, onBlur, placeholder) => React.createElement(
+    const field = (config) => React.createElement(
       RN.View,
-      { style: styles.field },
-      React.createElement(RN.Text, { style: styles.label }, label),
+      { key: config.label, style: styles.field },
+      React.createElement(RN.Text, { style: styles.label }, config.label),
       React.createElement(RN.TextInput, {
-        style: styles.input,
-        value,
-        placeholder,
+        style: [styles.input, config.multiline ? styles.multiline : null],
+        value: config.value,
+        placeholder: config.placeholder,
         placeholderTextColor: "#6b6f76",
         autoCapitalize: "none",
         autoCorrect: false,
-        onChangeText: onChange,
-        onBlur,
-        onSubmitEditing: onBlur
-      })
+        multiline: Boolean(config.multiline),
+        onChangeText: config.onChange,
+        onBlur: config.onBlur,
+        onSubmitEditing: config.multiline ? void 0 : config.onBlur
+      }),
+      config.hint ? React.createElement(RN.Text, { style: styles.hint }, config.hint) : null
     );
     return React.createElement(
       RN.ScrollView,
@@ -118,17 +294,32 @@ var plugin = (() => {
       row("rewrite", "/r", "fixes grammar and wording"),
       row("shakespeare", "/shakespeare", "rewrites your line like shakespeare"),
       React.createElement(RN.Text, { style: styles.section }, "gemini"),
-      field("api key", key, setKey, saveKey, "paste your key here"),
-      field("model", model, setModel, saveModel, "gemini-2.5-flash"),
+      field({
+        label: "api keys",
+        value: keys,
+        placeholder: "one key per line",
+        onChange: setKeys,
+        onBlur: saveKeys,
+        multiline: true,
+        hint: saved ? `${saved} key${saved === 1 ? "" : "s"} saved, used in this order and the next one takes over when one fails` : "paste one or more keys, one per line"
+      }),
+      field({
+        label: "model",
+        value: model,
+        placeholder: "gemini-2.5-flash",
+        onChange: setModel,
+        onBlur: saveModel,
+        hint: "blank lets the plugin ask your key which models it has and pick a flash one"
+      }),
       React.createElement(
         RN.Text,
         { style: styles.note },
-        "free key from aistudio.google.com/apikey. the key is saved in this plugin storage on your phone and only goes to google."
+        "free keys from aistudio.google.com/apikey. keys stay in this plugin storage on your phone and only go to google."
       ),
       React.createElement(
         RN.Text,
         { style: styles.note },
-        "ask, r and shakespeare need the key. if one answers with a 404 the model name is wrong for your key, try gemini-2.0-flash."
+        "a 404 on a model name is handled for you now, the plugin lists what the key can use instead of guessing. every key gets its own turn, so a dead or rate limited one just moves the request along."
       ),
       React.createElement(
         RN.Text,
@@ -167,6 +358,8 @@ var plugin = (() => {
       paddingVertical: 10,
       fontSize: 15
     },
+    multiline: { minHeight: 96, textAlignVertical: "top" },
+    hint: { color: "#7f8489", fontSize: 12, lineHeight: 16 },
     note: { color: "#7f8489", fontSize: 12, marginTop: 10, lineHeight: 17 }
   };
 
@@ -227,7 +420,7 @@ var plugin = (() => {
   }
 
   // src/MemeMaker/meme.ts
-  var Base = "https://api.memegen.link/images";
+  var Base2 = "https://api.memegen.link/images";
   function memeUrl(template, top, bottom) {
     const name = cleanTemplate(template) || randomTemplate();
     const segments = [];
@@ -235,11 +428,11 @@ var plugin = (() => {
     else if (bottom) segments.push("_");
     if (bottom) segments.push(encode(bottom));
     const path = segments.length ? `/${segments.join("/")}` : "";
-    return `${Base}/${name}${path}.png?width=600&font=impact`;
+    return `${Base2}/${name}${path}.png?width=600&font=impact`;
   }
   function customUrl(background, top, bottom) {
     const query = `background=${encodeURIComponent(background)}&width=600&font=impact`;
-    return `${Base}/custom/${top ? encode(top) : "_"}/${bottom ? encode(bottom) : "_"}.png?${query}`;
+    return `${Base2}/custom/${top ? encode(top) : "_"}/${bottom ? encode(bottom) : "_"}.png?${query}`;
   }
   function encode(text) {
     return encodeURIComponent(text.trim());
@@ -312,74 +505,6 @@ var plugin = (() => {
     };
     walk(args);
     return out;
-  }
-
-  // src/MemeMaker/gemini.ts
-  var Base2 = "https://generativelanguage.googleapis.com/v1beta/models";
-  var Fallbacks = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
-  function pickError(body) {
-    var _a, _b;
-    try {
-      const data = JSON.parse(body);
-      return (_b = (_a = data == null ? void 0 : data.error) == null ? void 0 : _a.message) != null ? _b : body;
-    } catch {
-      return body;
-    }
-  }
-  function models(wanted) {
-    const list = [(wanted == null ? void 0 : wanted.trim()) || "", ...Fallbacks].filter(Boolean);
-    return list.filter((model, index) => list.indexOf(model) === index);
-  }
-  async function generate(prompt, opts) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
-    const key = (_a = opts.key) == null ? void 0 : _a.trim();
-    if (!key) throw new Error("no gemini api key saved yet, open the plugin settings and paste one");
-    let lastError;
-    for (const model of models(opts.model)) {
-      const url = `${Base2}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-      let timer;
-      try {
-        const abort = new AbortController();
-        timer = setTimeout(() => abort.abort(), (_b = opts.timeout) != null ? _b : 3e4);
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: (_c = opts.temperature) != null ? _c : 0.7,
-              maxOutputTokens: (_d = opts.maxTokens) != null ? _d : 1024
-            }
-          }),
-          signal: abort.signal
-        });
-        const body = await response.text();
-        if (!response.ok) {
-          lastError = new Error(`gemini ${response.status}: ${pickError(body)}`);
-          if (response.status === 404) continue;
-          throw lastError;
-        }
-        const data = JSON.parse(body);
-        const text = ((_h = (_g = (_f = (_e = data == null ? void 0 : data.candidates) == null ? void 0 : _e[0]) == null ? void 0 : _f.content) == null ? void 0 : _g.parts) != null ? _h : []).map((part) => {
-          var _a2;
-          return (_a2 = part == null ? void 0 : part.text) != null ? _a2 : "";
-        }).join("").trim();
-        if (!text) throw new Error("gemini sent an empty answer back");
-        return text;
-      } catch (error) {
-        lastError = error;
-        if ((error == null ? void 0 : error.name) === "AbortError") {
-          throw new Error("gemini took too long to answer");
-        }
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-    }
-    throw lastError != null ? lastError : new Error("gemini did not answer");
-  }
-  function shorten(text, max = 1900) {
-    const clean = text.trim();
-    return clean.length > max ? `${clean.slice(0, max - 1)}\u2026` : clean;
   }
 
   // src/MemeMaker/index.ts
@@ -552,9 +677,10 @@ var plugin = (() => {
           const text = ((_a = opts[config.option]) != null ? _a : "").trim();
           if (!text) return `type something after /${config.name}`;
           const settings = readSettings();
-          toast("meme maker: asking gemini");
+          const keys = readKeys();
+          toast(keys.length > 1 ? `meme maker: asking gemini (${keys.length} keys)` : "meme maker: asking gemini");
           const answer = await generate(config.build(text), {
-            key: settings.apiKey,
+            keys,
             model: settings.model,
             temperature: config.temperature
           });

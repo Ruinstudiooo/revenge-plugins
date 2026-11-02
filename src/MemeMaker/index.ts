@@ -1,5 +1,5 @@
 import SettingsScreen from './settings'
-import { bindChange, readSettings } from './shared'
+import { bindChange, readKeys, readSettings } from './shared'
 import { customUrl, lastImageUrl, memeUrl, readOptions } from './meme'
 import { randomTemplate } from './templates'
 import { generate, shorten } from './gemini'
@@ -218,10 +218,11 @@ function aiCommand(config: {
 				if (!text) return `type something after /${config.name}`
 
 				const settings = readSettings()
-				toast('meme maker: asking gemini')
+				const keys = readKeys()
+				toast(keys.length > 1 ? `meme maker: asking gemini (${keys.length} keys)` : 'meme maker: asking gemini')
 
 				const answer = await generate(config.build(text), {
-					key: settings.apiKey,
+					keys,
 					model: settings.model,
 					temperature: config.temperature,
 				})

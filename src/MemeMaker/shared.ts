@@ -1,3 +1,5 @@
+import { parseKeys } from './gemini'
+
 export interface Settings {
 	/** the /meme command */
 	meme: boolean
@@ -11,9 +13,9 @@ export interface Settings {
 	rewrite: boolean
 	/** the /shakespeare command */
 	shakespeare: boolean
-	/** gemini api key, needed by ask, r and shakespeare */
-	apiKey: string
-	/** gemini model name, blank means the default */
+	/** gemini api keys, one per line, used in order until one answers */
+	keys: string
+	/** gemini model name, blank means pick one the key actually has */
 	model: string
 }
 
@@ -24,7 +26,7 @@ export const DefaultSettings: Settings = {
 	ask: true,
 	rewrite: true,
 	shakespeare: true,
-	apiKey: '',
+	keys: '',
 	model: 'gemini-2.5-flash',
 }
 
@@ -34,6 +36,12 @@ export function store(): Record<string, any> {
 
 export function readSettings(): Settings {
 	return { ...DefaultSettings, ...store() }
+}
+
+/** the raw key list, older installs kept a single key under apiKey */
+export function readKeys(): string[] {
+	const saved = store()
+	return parseKeys(saved.keys ?? saved.apiKey ?? '')
 }
 
 export function writeSettings(patch: Partial<Settings>) {

@@ -1,5 +1,6 @@
 import { readSettings, writeSettings } from './shared'
 import type { Settings } from './shared'
+import { parseKeys } from './gemini'
 
 type Toggle = 'meme' | 'memetext' | 'random' | 'ask' | 'rewrite' | 'shakespeare'
 
@@ -7,8 +8,8 @@ export default function SettingsScreen() {
 	const React = vendetta.metro.common.React
 	const RN = vendetta.metro.common.ReactNative
 	const [state, setState] = React.useState(() => readSettings() as Settings)
-	const [key, setKey] = React.useState(state.apiKey)
-	const [model, setModel] = React.useState(state.model)
+	const [keys, setKeys] = React.useState(String(state.keys ?? ''))
+	const [model, setModel] = React.useState(String(state.model ?? ''))
 
 	const toggle = (name: Toggle) => {
 		const next = !state[name]
@@ -16,14 +17,22 @@ export default function SettingsScreen() {
 		setState({ ...state, [name]: next })
 	}
 
-	const saveKey = () => {
-		const value = key.trim()
-		writeSettings({ apiKey: value })
-		setState({ ...state, apiKey: value })
+	const saved = parseKeys(keys).length
+
+	const saveKeys = () => {
+		const value = keys
+			.split(/\r?\n/)
+			.map((line: string) => line.trim())
+			.filter(Boolean)
+			.join('\n')
+
+		setKeys(value)
+		writeSettings({ keys: value })
+		setState({ ...state, keys: value })
 	}
 
 	const saveModel = () => {
-		const value = model.trim() || 'gemini-2.5-flash'
+		const value = model.trim()
 		setModel(value)
 		writeSettings({ model: value })
 		setState({ ...state, model: value })
@@ -42,28 +51,32 @@ export default function SettingsScreen() {
 			React.createElement(RN.Switch, { value: Boolean(state[name]), onValueChange: () => toggle(name) }),
 		)
 
-	const field = (
-		label: string,
-		value: string,
-		onChange: (text: string) => void,
-		onBlur: () => void,
-		placeholder: string,
-	) =>
+	const field = (config: {
+		label: string
+		value: string
+		placeholder: string
+		onChange: (text: string) => void
+		onBlur: () => void
+		multiline?: boolean
+		hint?: string
+	}) =>
 		React.createElement(
 			RN.View,
-			{ style: styles.field },
-			React.createElement(RN.Text, { style: styles.label }, label),
+			{ key: config.label, style: styles.field },
+			React.createElement(RN.Text, { style: styles.label }, config.label),
 			React.createElement(RN.TextInput, {
-				style: styles.input,
-				value,
-				placeholder,
+				style: [styles.input, config.multiline ? styles.multiline : null],
+				value: config.value,
+				placeholder: config.placeholder,
 				placeholderTextColor: '#6b6f76',
 				autoCapitalize: 'none',
 				autoCorrect: false,
-				onChangeText: onChange,
-				onBlur,
-				onSubmitEditing: onBlur,
+				multiline: Boolean(config.multiline),
+				onChangeText: config.onChange,
+				onBlur: config.onBlur,
+				onSubmitEditing: config.multiline ? undefined : config.onBlur,
 			}),
+			config.hint ? React.createElement(RN.Text, { style: styles.hint }, config.hint) : null,
 		)
 
 	return React.createElement(
@@ -78,17 +91,34 @@ export default function SettingsScreen() {
 		row('shakespeare', '/shakespeare', 'rewrites your line like shakespeare'),
 
 		React.createElement(RN.Text, { style: styles.section }, 'gemini'),
-		field('api key', key, setKey, saveKey, 'paste your key here'),
-		field('model', model, setModel, saveModel, 'gemini-2.5-flash'),
+		field({
+			label: 'api keys',
+			value: keys,
+			placeholder: 'one key per line',
+			onChange: setKeys,
+			onBlur: saveKeys,
+			multiline: true,
+			hint: saved
+				? `${saved} key${saved === 1 ? '' : 's'} saved, used in this order and the next one takes over when one fails`
+				: 'paste one or more keys, one per line',
+		}),
+		field({
+			label: 'model',
+			value: model,
+			placeholder: 'gemini-2.5-flash',
+			onChange: setModel,
+			onBlur: saveModel,
+			hint: 'blank lets the plugin ask your key which models it has and pick a flash one',
+		}),
 		React.createElement(
 			RN.Text,
 			{ style: styles.note },
-			'free key from aistudio.google.com/apikey. the key is saved in this plugin storage on your phone and only goes to google.',
+			'free keys from aistudio.google.com/apikey. keys stay in this plugin storage on your phone and only go to google.',
 		),
 		React.createElement(
 			RN.Text,
 			{ style: styles.note },
-			'ask, r and shakespeare need the key. if one answers with a 404 the model name is wrong for your key, try gemini-2.0-flash.',
+			'a 404 on a model name is handled for you now, the plugin lists what the key can use instead of guessing. every key gets its own turn, so a dead or rate limited one just moves the request along.',
 		),
 		React.createElement(
 			RN.Text,
@@ -128,5 +158,7 @@ const styles = {
 		paddingVertical: 10,
 		fontSize: 15,
 	},
+	multiline: { minHeight: 96, textAlignVertical: 'top' },
+	hint: { color: '#7f8489', fontSize: 12, lineHeight: 16 },
 	note: { color: '#7f8489', fontSize: 12, marginTop: 10, lineHeight: 17 },
 } as const

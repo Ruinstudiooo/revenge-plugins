@@ -76,8 +76,10 @@ an `image:` option overrides the search if you want a specific url.
 /random top:me bottom:nobody:
 ```
 
-the three text commands go through the gemini api, so they need a key. paste it in the plugin
-settings, it is stored in this plugin's storage on the phone.
+the three text commands go through the gemini api, so they need a key. paste one or more into the
+plugin settings, one per line. keys are tried in order and the next one takes over when one is
+rejected, rate limited or out of quota, so a stack of free keys keeps working. the key that answered
+last is used first next time.
 
 | command | what it does |
 | --- | --- |
@@ -90,9 +92,10 @@ settings, it is stored in this plugin's storage on the phone.
 /shakespeare text:i am hungry
 ```
 
-the model defaults to `gemini-2.5-flash`. if your key answers with a 404 on that, the plugin walks
-down to `gemini-2.0-flash` and `gemini-1.5-flash` on its own, and you can pin another name in the
-settings.
+model names are not guessed. the plugin asks the key what it can `generateContent` with, then uses
+your preferred name if the key has it, otherwise a flash model from that list. that is what kills
+the `404 ... is not found for API version v1beta` answer, since a key is never asked for a model it
+does not have. leave the model field blank to always take the list, or pin a name the key has.
 
 images are rendered by `api.memegen.link`, so no image library ships in the bundle and the meme
 commands need internet to work.
